@@ -279,7 +279,256 @@ linux> gcc -Og -S mstore.c
 ```
 Nội dung đầy đủ của file `mstore.s` (sau khi lược bỏ các chỉ thị rác) sẽ được trình bày như sau:
 
-*(Nội dung bức ảnh dừng lại ở câu dẫn nhập vào mã nguồn file `.s`)*.
+```assembly
+    .file   "010-mstore.c"
+    .text
+    .globl  multstore
+    .type   multstore, @function
+multstore:
+    pushq   %rbx
+    movq    %rdx, %rbx
+    call    mult2
+    movq    %rax, (%rbx)
+    popq    %rbx
+    ret
+    .size   multstore, .-multstore
+    .ident  "GCC: (Ubuntu 4.8.1-2ubuntu1-12.04) 4.8.1"
+    .section    .note.GNU-stack,"",@progbits
+```
+
+**Giải thích về các chỉ thị (Directives):**
+*   Tất cả các dòng bắt đầu bằng dấu **`.`** là các chỉ thị nhằm hướng dẫn trình dịch chuyển (assembler) và trình liên kết (linker). 
+*   **Về cơ bản:** Chúng ta có thể bỏ qua các dòng này khi phân tích logic chương trình. Chúng không tạo ra các lệnh máy thực thi trực tiếp.
+
+---
+
+### Phiên bản Assembly rút gọn và Chú giải (Annotated Version)
+
+Để giúp việc phân tích dễ dàng hơn, sách sẽ lược bỏ các chỉ thị rác và trình bày mã dưới dạng có chú thích. Đây cũng là cách bạn nên nhìn nhận khi soi mã trong IDA Pro.
+
+**Ánh xạ tham số vào thanh ghi (Register Mapping):**
+*   `x` nằm trong thanh ghi `%rdi`
+*   `y` nằm trong thanh ghi `%rsi`
+*   `dest` nằm trong thanh ghi `%rdx`
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Chú thích (Ý nghĩa logic) |
+| :--- | :--- | :--- | :--- |
+| 1 | `multstore:` | `multstore:` | Nhãn bắt đầu hàm. |
+| 2 | `pushq %rbx` | `push rbx` | Lưu giá trị `%rbx` (Save %rbx). |
+| 3 | `movq %rdx, %rbx` | `mov rbx, rdx` | Copy giá trị `dest` sang `%rbx`. |
+| 4 | `call mult2` | `call mult2` | Gọi hàm `mult2(x, y)`. |
+| 5 | `movq %rax, (%rbx)` | `mov [rbx], rax` | Lưu kết quả (`t`) vào địa chỉ `*dest`. |
+| 6 | `popq %rbx` | `pop rbx` | Khôi phục giá trị `%rbx` (Restore %rbx). |
+| 7 | `ret` | `retn` | Trở về (Return). |
+
+**Lưu ý về cách trình bày:**
+*   Các dòng mã được đánh số bên trái để tiện tham chiếu.
+*   Phần chú giải bên phải mô tả ngắn gọn tác động của lệnh và mối liên hệ của nó với mã nguồn C.
+
+---
+
+### Các tài liệu bổ sung (Web Asides)
+
+Sách cũng cung cấp các tài liệu mở rộng trên web cho những người đam mê chuyên sâu:
+*   **IA32 Machine Code:** Kiến thức nền tảng về x86-64 giúp việc học kiến thức cũ (IA32) trở nên khá đơn giản.
+*   **Kết hợp C và Assembly:** Giới thiệu các cách để nhúng mã assembly vào chương trình C. Đối với một số ứng dụng đặc thù, lập trình viên cần xuống mức thấp để tận dụng các tính năng phần cứng mà ngôn ngữ bậc cao không hỗ trợ. Một cách tiếp cận phổ biến là viết toàn bộ hàm bằng assembly và kết hợp chúng với các hàm C trong giai đoạn liên kết.
+
+---
+
+### So sánh cú pháp Assembly: ATT vs. Intel (Aside)
+
+Sách (CS:APP) sử dụng định dạng **ATT** (đặt theo tên công ty AT&T). Tuy nhiên, các công cụ khác như **IDA Pro**, Microsoft Disassembler và tài liệu của Intel lại sử dụng định dạng **Intel**.
+
+Để tạo mã máy cú pháp Intel bằng GCC, ta dùng lệnh:
+```bash
+linux> gcc -Og -S -masm=intel mstore.c
+```
+
+**Mã Assembly của hàm `multstore` (Cú pháp Intel/IDA Pro):**
+```assembly
+multstore:
+    push    rbx
+    mov     rbx, rdx
+    call    mult2
+    mov     QWORD PTR [rbx], rax
+    pop     rbx
+    ret
+```
+
+**Các điểm khác biệt then chốt (Cần nhớ để dùng IDA Pro):**
+
+1.  **Hậu tố kích thước (Size suffixes):** Intel lược bỏ các hậu tố như `q` trong `pushq` hay `movq`. Ta chỉ thấy `push` và `mov`.
+2.  **Ký hiệu thanh ghi:** Intel lược bỏ dấu `%` trước tên thanh ghi. Ví dụ: dùng `rbx` thay vì `%rbx`.
+3.  **Biểu diễn bộ nhớ:** Intel sử dụng cách mô tả địa chỉ khác hẳn.
+    *   **ATT:** `(%rbx)`
+    *   **Intel:** `QWORD PTR [rbx]` (Sử dụng từ khóa như `QWORD PTR` và dấu ngoặc vuông `[]`).
+4.  **Thứ tự toán hạng (Cực kỳ quan trọng):** 
+    *   **ATT:** `Lệnh  Nguồn, Đích` (Ví dụ: `movq %rdx, %rbx` -> Copy từ rdx sang rbx).
+    *   **Intel (IDA):** `Lệnh  Đích, Nguồn` (Ví dụ: `mov rbx, rdx` -> Copy từ rdx vào rbx).
+    *   *Lưu ý:* Việc đảo ngược thứ tự này thường gây nhầm lẫn nhất khi bạn chuyển đổi giữa đọc sách và soi mã trên IDA.
+
+---
+
+## 3.3 Data Formats (Định dạng dữ liệu)
+
+Do bắt nguồn từ kiến trúc 16-bit rồi mở rộng lên 32-bit và 64-bit, Intel sử dụng thuật ngữ **"word"** (từ) theo cách riêng:
+
+*   **Word:** Đại diện cho kiểu dữ liệu **16-bit**.
+*   **Double words:** Đại diện cho kiểu dữ liệu **32-bit** (kí hiệu là `l` trong ATT, viết tắt của "long word").
+*   **Quad words:** Đại diện cho kiểu dữ liệu **64-bit** (kí hiệu là `q` trong ATT). Đây là kích thước mặc định cho các con trỏ và số nguyên `long` trong x86-64.
+
+**Bảng tóm tắt các kiểu dữ liệu nguyên trong C trên x86-64:**
+
+| Kiểu dữ liệu C | Cú pháp Intel (IDA) | Cú pháp ATT (Sách) | Kích thước (Bytes) |
+| :--- | :--- | :--- | :--- |
+| `char` | `Byte` | `b` | 1 |
+| `short` | `Word` | `w` | 2 |
+| `int` | `Double word` | `l` | 4 |
+| `long` | `Quad word` | `q` | 8 |
+| `char *` (Pointer) | `Quad word` | `q` | 8 |
+| `float` | `Single precision` | `s` | 4 |
+| `double` | `Double precision` | `l` | 8 |
+
+*   **Lưu ý:** Trong kiến trúc x86-64, kiểu `long` được triển khai với 64 bit, cho phép dải giá trị rất rộng. Hầu hết các ví dụ trong chương này sẽ tập trung vào con trỏ và dữ liệu `long` (8 bytes).
+
+---
+
+### Kết hợp mã Assembly với chương trình C (Aside)
+
+Mặc dù trình biên dịch C thực hiện rất tốt việc chuyển đổi logic sang mã máy, nhưng có một số tính năng của phần cứng mà C không thể truy cập trực tiếp.
+*   **Ví dụ:** Flag trạng thái **PF (Parity Flag)**. Mỗi khi CPU thực hiện lệnh số học, nó đặt PF = 1 nếu 8 bit thấp của kết quả có số lượng bit 1 là số chẵn. Trong C, việc kiểm tra điều này tốn rất nhiều bước tính toán (dịch bit, masking), trong khi mã máy có thể đọc trực tiếp từ thanh ghi flag.
+*   **Hai cách nhúng mã máy:**
+    1.  Viết toàn bộ hàm trong một file `.s` riêng biệt rồi để trình liên kết (linker) kết hợp lại.
+    2.  Sử dụng **inline assembly** của GCC bằng chỉ thị `asm`. Cách này giúp chèn các đoạn mã máy ngắn trực tiếp vào file `.c`.
+
+---
+
+### Hình 3.1: Kích thước các kiểu dữ liệu C trong x86-64
+
+Đây là bảng ánh xạ quan trọng nhất để bạn nhận diện dữ liệu khi dùng IDA Pro. Tập lệnh x86-64 cung cấp đầy đủ các chỉ thị cho từng kích thước dữ liệu này.
+
+| C declaration | Intel data type | Assembly suffix (ATT) | Size (bytes) |
+| :--- | :--- | :--- | :--- |
+| `char` | **Byte** | `b` | 1 |
+| `short` | **Word** | `w` | 2 |
+| `int` | **Double word** | `l` | 4 |
+| `long` | **Quad word** | `q` | 8 |
+| `char *` (Pointer) | **Quad word** | `q` | 8 |
+| `float` | **Single precision** | `s` | 4 |
+| `double` | **Double precision** | `l` | 8 |
+
+**Lưu ý kỹ thuật về hậu tố (Suffixes):**
+*   Hậu tố `l` được dùng cho cả số nguyên 4-byte (double word) và số thực 8-byte (double precision). Điều này không gây nhầm lẫn vì các lệnh xử lý số thực và số nguyên là hoàn toàn khác nhau.
+*   Các con trỏ (ví dụ `char *`) luôn được coi là số nguyên 8-byte (quad words) trong kiến trúc 64-bit.
+
+---
+
+### Số thực dấu phẩy động (Floating-point)
+
+Số thực trong x86-64 có hai định dạng chính tương ứng với C:
+1.  **`float` (Single-precision):** 4 bytes.
+2.  **`double` (Double-precision):** 8 bytes.
+
+**Về `long double` (Số thực mở rộng):**
+*   Dòng họ x86 có lịch sử hỗ trợ một định dạng số thực đặc biệt 80-bit (10 bytes).
+*   Trong C, bạn có thể khai báo bằng `long double` (80-bit). Tuy nhiên, sách khuyến cáo **không nên sử dụng** định dạng này vì nó không có tính di động (portable) sang các dòng máy khác, và nó thường không được thực hiện bởi cùng một phần cứng hiệu suất cao như các loại đơn (single) và đôi (double).
+*   **Hậu tố lệnh trong ATT:** Hầu hết các lệnh assembly có một hậu tố ký tự đơn để chỉ định kích thước của toán hạng.
+    *   **`b` (byte):** 1 byte (ví dụ: `movb`).
+    *   **`w` (word):** 2 bytes (ví dụ: `movw`).
+    *   **`l` (double word):** 4 bytes (ví dụ: `movl`). Lưu ý: `l` còn dùng cho số thực 8 bytes.
+    *   **`q` (quad word):** 8 bytes (ví dụ: `movq`).
+    *   *Ghi chú:* Trong IDA Pro (Intel), kích thước này thường được xác định qua tên thanh ghi (ví dụ: `eax` là 4 bytes, `rax` là 8 bytes) hoặc từ khóa như `BYTE PTR`, `DWORD PTR`.
+
+---
+
+## 3.4 Accessing Information (Truy cập thông tin)
+
+Một bộ xử lý x86-64 chứa một tập hợp gồm **16 thanh ghi đa năng (general-purpose registers)** lưu trữ các giá trị 64-bit. Các thanh ghi này dùng để lưu trữ cả dữ liệu số nguyên lẫn con trỏ.
+
+### Sự tiến hóa của các thanh ghi
+Tên gọi của các thanh ghi phản ánh lịch sử phát triển của kiến trúc Intel:
+1.  **8086 (16-bit):** 8 thanh ghi gốc 16-bit: `%ax` đến `%bp`.
+2.  **IA32 (32-bit):** Các thanh ghi được mở rộng thành 32-bit, ký hiệu là `%eax` đến `%ebp`.
+3.  **x86-64 (64-bit):** 
+    *   Các thanh ghi mở rộng thành 64-bit, ký hiệu là `%rax` đến `%rbp`.
+    *   Bổ sung thêm 8 thanh ghi mới: `%r8` đến `%r15`.
+
+### Truy cập các phần của thanh ghi (Nested Boxes)
+Các lệnh có thể vận hành trên các kích thước dữ liệu khác nhau nằm trong các byte bậc thấp (low-order bytes) của thanh ghi:
+*   **1 byte:** Truy cập 8 bit thấp nhất.
+*   **2 bytes:** Truy cập 16 bit thấp nhất.
+*   **4 bytes:** Truy cập 32 bit thấp nhất.
+*   **8 bytes:** Truy cập toàn bộ thanh ghi.
+
+---
+
+### Quy tắc quan trọng về thay đổi dữ liệu (Cực kỳ quan trọng khi dùng IDA)
+
+Khi một lệnh có đích đến là một thanh ghi, có hai quy ước xảy ra cho các byte còn lại:
+1.  **Ghi 1 hoặc 2 bytes:** Các byte còn lại trong thanh ghi **không thay đổi**.
+2.  **Ghi 4 bytes (Double-word):** Các byte bậc cao (4 bytes phía trên) của thanh ghi sẽ **bị đặt về 0 (zero-extended)**. 
+    *   *Ví dụ:* Nếu bạn thực hiện `mov eax, 1`, thì toàn bộ 32 bit cao của `rax` sẽ tự động bị xóa về 0. Đây là quy ước được áp dụng khi mở rộng từ IA32 lên x86-64.
+
+| Thao tác (ATT) | Thao tác (Intel/IDA) | Tác động lên thanh ghi 64-bit |
+| :--- | :--- | :--- |
+| `movb $1, %al` | `mov al, 1` | Chỉ thay đổi 8 bit thấp, các bit khác giữ nguyên. |
+| `movw $1, %ax` | `mov ax, 1` | Chỉ thay đổi 16 bit thấp, các bit khác giữ nguyên. |
+| `movl $1, %eax` | `mov eax, 1` | **Xóa 32 bit cao về 0**, nạp 1 vào 32 bit thấp. |
+| `movq $1, %rax` | `mov rax, 1` | Thay đổi toàn bộ 64 bit. |
+
+---
+
+### Vai trò của các thanh ghi
+Mặc dù được gọi là "đa năng", nhưng theo quy ước lập trình chuẩn (ABI), các thanh ghi đóng các vai trò khác nhau:
+*   **`%rsp` (Stack Pointer):** Thanh ghi đặc biệt nhất, dùng để trỏ đến vị trí cuối cùng trong ngăn xếp (run-time stack). IDA Pro và các chương trình thường đọc/ghi thanh ghi này một cách thận trọng.
+*   **15 thanh ghi còn lại:** Có tính linh hoạt cao hơn, nhưng việc sử dụng chúng phải tuân theo các quy ước để quản lý ngăn xếp, truyền tham số hàm, trả về giá trị hàm...
+
+---
+
+### Hình 3.2: Các thanh ghi số nguyên (Integer Registers)
+
+Các phần bậc thấp của tất cả 16 thanh ghi có thể được truy cập dưới dạng các đại lượng: **8-bit (byte)**, **16-bit (word)**, **32-bit (double word)**, và **64-bit (quad word)**.
+
+<img width="658" height="749" alt="image" src="https://github.com/user-attachments/assets/6989a3b6-5841-40aa-9437-e2002ccd4bee" />
+
+
+| 64-bit (Sách/ATT) | 32-bit | 16-bit | 8-bit | IDA Pro (Intel) | Vai trò theo quy ước (Role) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `%rax` | `%eax` | `%ax` | `%al` | `rax/eax...` | **Return value** (Giá trị trả về) |
+| `%rbx` | `%ebx` | `%bx` | `%bl` | `rbx/ebx...` | **Callee saved** (Hàm bị gọi phải lưu) |
+| `%rcx` | `%ecx` | `%cx` | `%cl` | `rcx/ecx...` | **4th argument** (Tham số thứ 4) |
+| `%rdx` | `%edx` | `%dx` | `%dl` | `rdx/edx...` | **3rd argument** (Tham số thứ 3) |
+| `%rsi` | `%esi` | `%si` | `%sil` | `rsi/esi...` | **2nd argument** (Tham số thứ 2) |
+| `%rdi` | `%edi` | `%di` | `%dil` | `rdi/edi...` | **1st argument** (Tham số thứ 1) |
+| `%rbp` | `%ebp` | `%bp` | `%bpl` | `rbp/ebp...` | **Callee saved** (Thường dùng làm Frame Pointer) |
+| `%rsp` | `%esp` | `%sp` | `%spl` | `rsp/esp...` | **Stack pointer** (Con trỏ ngăn xếp) |
+| `%r8` | `%r8d` | `%r8w` | `%r8b` | `r8/r8d...` | **5th argument** (Tham số thứ 5) |
+| `%r9` | `%r9d` | `%r9w` | `%r9b` | `r9/r9d...` | **6th argument** (Tham số thứ 6) |
+| `%r10` | `%r10d` | `%r10w` | `%r10b` | `r10/r10d...` | **Caller saved** (Hàm gọi phải tự lưu) |
+| `%r11` | `%r11d` | `%r11w` | `%r11b` | `r11/r11d...` | **Caller saved** (Hàm gọi phải tự lưu) |
+| `%r12` | `%r12d` | `%r12w` | `%r12b` | `r12/r12d...` | **Callee saved** |
+| `%r13` | `%r13d` | `%r13w` | `%r13b` | `r13/r13d...` | **Callee saved** |
+| `%r14` | `%r14d` | `%r14w` | `%r14b` | `r14/r14d...` | **Callee saved** |
+| `%r15` | `%r15d` | `%r15w` | `%r15b` | `r15/r15d...` | **Callee saved** |
+
+---
+
+### Các quy ước sử dụng thanh ghi (Register Conventions)
+
+Như sơ đồ trên cho thấy, các thanh ghi khác nhau phục vụ các vai trò khác nhau trong các chương trình điển hình:
+
+*   **Truyền tham số:** Các thanh ghi `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9` được dùng để truyền 6 tham số đầu tiên của một hàm. Trong IDA Pro, khi bạn thấy dữ liệu được nạp vào `%rdi` ngay trước một lệnh `call`, đó chính là tham số thứ nhất của hàm đó.
+*   **Giá trị trả về:** Thanh ghi `%rax` luôn chứa kết quả mà một hàm trả về cho hàm gọi nó.
+*   **Quản lý Stack:** `%rsp` là con trỏ đặc biệt dùng để quản lý ranh giới hiện tại của ngăn xếp.
+*   **Dữ liệu tạm thời & Biến cục bộ:** Các thanh ghi còn lại được dùng để lưu trữ dữ liệu tạm thời. 
+
+**Quy tắc lưu trữ (Saved Registers):**
+*   **Caller saved (Hàm gọi lưu):** Hàm gọi phải tự cất dữ liệu trong các thanh ghi này nếu muốn giữ lại giá trị trước khi gọi một hàm khác (vì hàm bị gọi có thể ghi đè lên chúng).
+*   **Callee saved (Hàm bị gọi lưu):** Nếu một hàm muốn sử dụng các thanh ghi này, nó phải `push` giá trị cũ vào Stack và `pop` lại trước khi trả về để đảm bảo không làm hỏng dữ liệu của hàm đã gọi nó. (Đây là lý do bạn thường thấy lệnh `push rbx` ở đầu hàm trong IDA).
+
+Các quy ước này sẽ được trình bày chi tiết hơn trong **Mục 3.7**, nơi mô tả cách triển khai các thủ tục (procedures).
+
+*(Nội dung bức ảnh dừng lại ở đoạn dẫn nhập vào Mục 3.7)*.
 
 ---
 

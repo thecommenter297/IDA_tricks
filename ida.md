@@ -146,9 +146,13 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 *Sử dụng hệ số tỷ lệ (Scale factor) là 4.*
 
 *   **AT&T:**
-```movl (%rdx, %rcx, 4), %eax```
+```asm
+movl (%rdx, %rcx, 4), %eax
+```
 *   **Intel:**
-```mov eax, dword ptr [rdx + rcx * 4]```
+```asm
+mov eax, dword ptr [rdx + rcx * 4]
+```
 *   **Kết quả:** `%eax` chứa giá trị tại $M[x_E + 4i]$.
 
 **4. Lấy địa chỉ của phần tử thứ 2 (Biểu thức C: `&E[2]`)**
@@ -156,11 +160,15 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 
 *   **AT&T:**
 
-```leaq 8(%rdx), %rax```
+```asm
+leaq 8(%rdx), %rax
+```
 
 *   **Intel:**
 
-```lea rax, [rdx + 8]```
+```asm
+lea rax, [rdx + 8]
+```
 
 *   **Kết quả:** `%rax` chứa địa chỉ $x_E + 8$.
 
@@ -168,10 +176,14 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 *Thường xuất hiện khi trình biên dịch tối ưu hóa vòng lặp.*
 
 *   **AT&T:**
-```leaq -4(%rdx, %rcx, 4), %rax```
+```asm
+leaq -4(%rdx, %rcx, 4), %rax
+```
 
 *   **Intel:**
-```lea rax, [rdx + rcx * 4 - 4]```
+```asm
+lea rax, [rdx + rcx * 4 - 4]
+```
 
 *   **Kết quả:** `%rax` chứa địa chỉ $x_E + 4i - 4$.
 

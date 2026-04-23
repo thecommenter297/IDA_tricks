@@ -128,9 +128,13 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 *Dùng để gán con trỏ hoặc truyền tham số.*
 
 *   **AT&T:**
-```movq %rdx, %rax```
+```asm
+movq %rdx, %rax
+```
 *   **Intel:**
-```mov rax, rdx```
+```asm
+mov rax, rdx
+```
 *   **Kết quả:** `%rax` chứa địa chỉ $x_E$.
 
 **2. Truy cập phần tử đầu tiên (Biểu thức C: `E[0]`)**

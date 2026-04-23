@@ -901,18 +901,65 @@ Bài tập này yêu cầu chọn cặp lệnh di chuyển dữ liệu phù hợ
 Với `sp` là con trỏ kiểu `src_t`, `dp` là con trỏ kiểu `dest_t`.
 
 <details>
-<summary><b>Nhấn để xem phân tích các trường hợp (Đang cập nhật từ trang sau)</b></summary>
+<summary><b>Nhấn để xem phân tích các trường hợp</b></summary>
 
-*Lưu ý: Nội dung bức ảnh này mới chỉ đưa ra phần đề bài và thiết lập. Tôi sẽ trình bày chi tiết lời giải khi bạn gửi ảnh trang tiếp theo chứa bảng các trường hợp cụ thể (như `long` sang `char`, `unsigned` sang `int`, v.v.).*
+---
 
-**Logic chung:**
-1.  Dùng một lệnh để đọc dữ liệu từ `*sp` vào một thanh ghi (có thể cần bù không hoặc bù dấu tùy kiểu dữ liệu).
-2.  Dùng một lệnh để ghi từ thanh ghi đó vào `*dp`.
+Giả sử `sp` (nguồn) nằm trong `%rdi` và `dp` (đích) nằm trong `%rsi`. 
+**Quy tắc:** Khi thay đổi cả kích thước và tính có dấu (signness), hãy thực hiện **thay đổi kích thước trước**.
+
+| Kiểu nguồn (`src_t`) | Kiểu đích (`dest_t`) | Lệnh 1 (Đọc & Chuyển đổi) | Lệnh 2 (Ghi vào đích) | Giải thích (IDA/Intel) |
+| :--- | :--- | :--- | :--- | :--- |
+| `long` | `long` | `movq (%rdi), %rax` | `movq %rax, (%rsi)` | `mov rax, [rdi]` / `mov [rsi], rax` |
+| `char` | `int` | `movsbl (%rdi), %eax` | `movl %eax, (%rsi)` | **Bù dấu** (1 byte signed -> 4 bytes) |
+| `char` | `unsigned` | `movsbl (%rdi), %eax` | `movl %eax, (%rsi)` | Chuyển kích thước trước (bù dấu), sau đó coi là unsigned. |
+| `unsigned char` | `long` | `movzbq (%rdi), %rax` | `movq %rax, (%rsi)` | **Bù không** (1 byte unsigned -> 8 bytes) |
+| `int` | `char` | `movl (%rdi), %eax` | `movb %al, (%rsi)` | Đọc 4 byte, chỉ ghi lại 1 byte thấp (`al`). |
+| `unsigned` | `unsigned char` | `movl (%rdi), %eax` | `movb %al, (%rsi)` | Tương tự trên, cắt cụt (truncation). |
+| `char` | `short` | `movsbw (%rdi), %ax` | `movw %ax, (%rsi)` | **Bù dấu** (1 byte -> 2 bytes). |
+
+---
+
 
 </details>
 
 ---
 
-*(Nội dung bức ảnh dừng lại ở phần giới thiệu Practice Problem 3.4)*.
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 216, bao gồm phần giải thích về con trỏ dành cho người mới và lời giải chi tiết cho bảng chuyển đổi kiểu dữ liệu trong bài tập 3.4.
+
+---
+
+### Kiến thức bổ sung: Ví dụ về con trỏ trong C (Aside)
+
+Hàm `exchange` cung cấp một minh họa tốt về cách sử dụng con trỏ. 
+*   **Giải mã con trỏ (Dereferencing):** 
+    *   Lệnh `long x = *xp;` là một thao tác **đọc** từ bộ nhớ. Ta lấy giá trị tại địa chỉ mà `xp` trỏ tới và lưu vào biến `x`.
+    *   Lệnh `*xp = y;` là một thao tác **ghi** vào bộ nhớ. Ta viết giá trị của `y` vào địa chỉ mà `xp` đang nắm giữ.
+*   **Toán tử lấy địa chỉ (`&`):** Tạo ra một con trỏ trỏ đến vị trí của biến.
+
+**Ví dụ thực tế:**
+```c
+long a = 4;
+long b = exchange(&a, 3);
+printf("a = %ld, b = %ld\n", a, b);
+```
+**Kết quả:** `a = 3, b = 4`. 
+Việc truyền con trỏ `&a` vào hàm cho phép hàm `exchange` thay đổi giá trị của biến `a` nằm ở một vùng nhớ từ xa (ngoài phạm vi của hàm).
+
+---
+
+### Practice Problem 3.5
+
+Bạn được cung cấp thông tin sau về một hàm có prototype:
+
+```c
+void decode1(long *xp, long *yp, long *zp);
+```
+
+*(Nội dung bức ảnh dừng lại ở phần giới thiệu Practice Problem 3.5)*.
+
+---
 
 <tạm dừng>

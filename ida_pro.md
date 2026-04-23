@@ -528,8 +528,391 @@ Như sơ đồ trên cho thấy, các thanh ghi khác nhau phục vụ các vai 
 
 Các quy ước này sẽ được trình bày chi tiết hơn trong **Mục 3.7**, nơi mô tả cách triển khai các thủ tục (procedures).
 
-*(Nội dung bức ảnh dừng lại ở đoạn dẫn nhập vào Mục 3.7)*.
+### 3.4.1 Operand Specifiers (Các loại toán hạng)
+
+Hầu hết các lệnh x86-64 có một hoặc nhiều toán hạng (operands), chỉ định các giá trị nguồn (source) để thực hiện phép toán và vị trí đích (destination) để lưu kết quả. Có 3 loại toán hạng chính:
+
+#### 1. Immediate (Giá trị tức thời)
+*   **Ký hiệu trong sách:** `$Imm` (ví dụ: `$-577` hoặc `$0x1F`).
+*   **Cách hiểu:** Đây là các **hằng số** (constants) được nhúng trực tiếp vào lệnh.
+*   **Trong IDA Pro:** Hiển thị số thuần túy (thường là hệ 16), ví dụ: `1Fh` hoặc `0FFFFFDC7h`.
+
+#### 2. Register (Thanh ghi)
+*   **Ký hiệu trong sách:** $r_a$ (ví dụ: `%rax`).
+*   **Cách hiểu:** Giá trị đang nằm trong 1 trong 16 thanh ghi.
+*   **Trong IDA Pro:** Tên thanh ghi như `rax`, `ebx`, `r10`.
+
+#### 3. Memory Reference (Tham chiếu bộ nhớ)
+Đây là phần gây rối nhất. Bản chất là chúng ta đang tính toán một **Địa chỉ hiệu dụng (Effective Address)** để truy cập vào RAM.
+
+Hãy quên các ký hiệu $M[...]$ đi, đây là cách IDA Pro biểu diễn các chế độ địa chỉ (Addressing Modes) từ Figure 3.3:
+
+| Loại địa chỉ | Sách (ATT) | **IDA Pro (Intel)** | Logic tính toán địa chỉ (Cách hiểu) |
+| :--- | :--- | :--- | :--- |
+| **Tuyệt đối (Absolute)** | `Imm` | `[0x12345]` | Truy cập thẳng vào địa chỉ `0x12345`. |
+| **Gián tiếp (Indirect)** | `(%rax)` | `[rax]` | Lấy giá trị trong `rax` làm địa chỉ để tìm dữ liệu. |
+| **Căn bản + Bù (Base + Displacement)** | `Imm(%rax)` | `[rax + 0x10]` | Lấy giá trị trong `rax` cộng thêm `0x10` làm địa chỉ. |
+| **Chỉ số (Indexed)** | `(%rax, %rcx)` | `[rax + rcx]` | Cộng giá trị 2 thanh ghi lại để ra địa chỉ. |
+| **Chỉ số có tỉ lệ (Scaled indexed)** | `( , %rcx, 4)` | `[rcx * 4]` | Lấy `rcx` nhân 4 để ra địa chỉ (thường dùng trong mảng). |
+| **Đầy đủ nhất (General Form)** | `Imm(%rb, %ri, s)` | `[rb + ri*s + Imm]` | **Base + (Index * Scale) + Offset** |
 
 ---
+
+### Giải mã "Công thức tổng quát" cực nhanh: `Imm(rb, ri, s)`
+
+Khi bạn nhìn thấy một dòng lệnh phức tạp trong IDA như: `mov eax, [rbx + rcx*4 + 10h]`
+
+1.  **`rb` (Base - Gốc):** Thanh ghi cơ sở (phải là thanh ghi 64-bit). Ở đây là `rbx`.
+2.  **`ri` (Index - Chỉ số):** Thanh ghi chỉ số (phải là thanh ghi 64-bit). Ở đây là `rcx`.
+3.  **`s` (Scale - Tỉ lệ):** Hệ số nhân, **bắt buộc** phải là 1, 2, 4, hoặc 8 (tương ứng với kích thước các kiểu dữ liệu `char`, `short`, `int`, `long`). Ở đây là `4`.
+4.  **`Imm` (Displacement/Offset):** Một hằng số cộng thêm vào. Ở đây là `10h`.
+
+**Tại sao phải phức tạp như vậy?**
+Vì nó khớp hoàn hảo với cách lập trình:
+*   `rb` là địa chỉ bắt đầu của một mảng (Array base).
+*   `ri` là chỉ số phần tử (Index `i`).
+*   `s` là kích thước của mỗi phần tử (ví dụ `int` là 4 bytes).
+*   `Imm` là độ lệch để dịch chuyển đến một trường cụ thể trong Struct (nếu mảng đó chứa các Struct).
+
+---
+
+
+### Practice Problem 3.1: Tính toán giá trị toán hạng
+
+<img width="651" height="512" alt="image" src="https://github.com/user-attachments/assets/226dfde6-9eda-4e1c-9185-608b6d1d6298" />
+
+
+<details>
+<summary><b>Nhấn để xem giải đề và phân tích logic</b></summary>
+
+**Giả thuyết (Trạng thái hệ thống):**
+*   **Bộ nhớ (Memory):**
+    *   `0x100`: `0xFF` | `0x104`: `0xAB` | `0x108`: `0x13` | `0x10C`: `0x11`
+*   **Thanh ghi (Registers):**
+    *   `rax`: `0x100` | `rcx`: `0x1` | `rdx`: `0x3`
+
+**Bảng tính toán giá trị:**
+
+| Toán hạng (ATT) | Cách hiểu (Intel/IDA) | Phép tính (Logic) | Kết quả |
+| :--- | :--- | :--- | :--- |
+| `%rax` | `rax` | Giá trị trong thanh ghi `rax` | **`0x100`** |
+| `0x104` | `[0x104]` | Giá trị tại địa chỉ bộ nhớ `0x104` | **`0xAB`** |
+| `$0x108` | `0x108` | Hằng số (Immediate) | **`0x108`** |
+| `(%rax)` | `[rax]` | Giá trị tại địa chỉ `0x100` | **`0xFF`** |
+| `4(%rax)` | `[rax + 4]` | Giá trị tại địa chỉ `0x100 + 4 = 0x104` | **`0xAB`** |
+| `9(%rax, %rdx)` | `[rax + rdx + 9]` | Giá trị tại `0x100 + 0x3 + 9 = 0x10C` | **`0x11`** |
+| `260(%rcx, %rdx)` | `[rcx + rdx + 260]` | Lưu ý: 260 = `0x104`. Đ/c: `0x1 + 0x3 + 0x104 = 0x108` | **`0x13`** |
+| `0xFC( , %rcx, 4)` | `[rcx * 4 + 0xFC]` | Địa chỉ: `(1 * 4) + 0xFC = 4 + 252 = 256` (`0x100`) | **`0xFF`** |
+| `(%rax, %rdx, 4)` | `[rax + rdx * 4]` | Địa chỉ: `0x100 + (3 * 4) = 0x100 + 12` (`0x10C`) | **`0x11`** |
+
+</details>
+
+---
+
+### 3.4.2 Data Movement Instructions (Các lệnh di chuyển dữ liệu)
+
+Đây là nhóm lệnh được sử dụng nhiều nhất trong mọi chương trình. Chúng có nhiệm vụ sao chép dữ liệu từ vị trí này sang vị trí khác. 
+
+#### Nhóm lệnh `MOV` (Instruction Class)
+Nhóm lệnh này thực hiện việc sao chép dữ liệu từ **Nguồn (Source)** sang **Đích (Destination)** mà không thực hiện bất kỳ phép biến đổi nào. Có 4 biến thể dựa trên kích thước dữ liệu:
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Kích thước (Bytes) | Tên gọi |
+| :--- | :--- | :--- | :--- |
+| `movb` | `mov` (byte ptr) | 1 | Move byte |
+| `movw` | `mov` (word ptr) | 2 | Move word |
+| `movl` | `mov` (dword ptr) | 4 | Move double word |
+| `movq` | `mov` (qword ptr) | 8 | Move quad word |
+
+**Nguyên tắc cơ bản:**
+1.  **Tính tổng quát:** Việc cho phép nhiều loại toán hạng (Immediate, Register, Memory) khiến một lệnh `mov` có thể diễn đạt rất nhiều tình huống trong mã nguồn C.
+2.  **Sự tương đồng:** Cả 4 lệnh trên đều có hiệu ứng tương tự, chỉ khác nhau về số lượng byte mà chúng tác động (1, 2, 4, hoặc 8 bytes).
+
+---
+
+### Các quy tắc kết hợp Source/Destination
+
+Trong kiến trúc x86-64, lệnh `MOV` có các giới hạn về việc kết hợp toán hạng mà bạn cần nhớ khi soi mã:
+
+1.  **Source (Nguồn):** Có thể là giá trị tức thời (Immediate), thanh ghi (Register), hoặc bộ nhớ (Memory).
+2.  **Destination (Đích):** Có thể là thanh ghi hoặc bộ nhớ.
+3.  **Hạn chế quan trọng:** Không thể thực hiện sao chép trực tiếp từ **Memory sang Memory** trong một lệnh duy nhất.
+    *   *Ví dụ:* Nếu muốn copy `*ptr1 = *ptr2`, máy tính phải tốn 2 bước: 
+        *   Bước 1: Nạp từ bộ nhớ vào thanh ghi (`Memory -> Register`).
+        *   Bước 2: Ghi từ thanh ghi vào bộ nhớ (`Register -> Memory`).
+
+### Hình 3.4: Các lệnh di chuyển dữ liệu đơn giản
+
+<img width="665" height="277" alt="image" src="https://github.com/user-attachments/assets/a9259c89-ca79-4b1a-9c03-ce3d35f5cb8a" />
+
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Hiệu ứng | Mô tả |
+| :--- | :--- | :--- | :--- |
+| `movb S, D` | `mov D, S` | $D \leftarrow S$ | Ghi 1 byte (Move byte) |
+| `movw S, D` | `mov D, S` | $D \leftarrow S$ | Ghi 2 bytes (Move word) |
+| `movl S, D` | `mov D, S` | $D \leftarrow S$ | Ghi 4 bytes (Move double word) |
+| `movq S, D` | `mov D, S` | $D \leftarrow S$ | Ghi 8 bytes (Move quad word) |
+| `movabsq I, R` | `movabs R, I` | $R \leftarrow I$ | Ghi hằng số 64-bit vào thanh ghi |
+
+---
+
+### Quy tắc về Toán hạng và Kích thước
+
+1.  **Hạn chế Memory-to-Memory:** x86-64 không cho phép một lệnh `mov` có cả hai toán hạng đều là địa chỉ bộ nhớ. Để chép dữ liệu từ vùng nhớ này sang vùng nhớ khác, bạn phải dùng một thanh ghi trung gian (ví dụ: nạp vào `rax` rồi ghi từ `rax` ra đích).
+2.  **Khớp kích thước:** Kích thước của thanh ghi phải khớp với hậu tố của lệnh (`b`, `w`, `l`, hoặc `q`).
+    *   `movb` dùng với các thanh ghi 8-bit (`al`, `bl`, `cl`...).
+    *   `movw` dùng với các thanh ghi 16-bit (`ax`, `bx`, `cx`...).
+    *   `movl` dùng với các thanh ghi 32-bit (`eax`, `ebx`, `ecx`...).
+    *   `movq` dùng với các thanh ghi 64-bit (`rax`, `rbx`, `rcx`...).
+
+### Ngoại lệ quan trọng của `movl` (Zero-Extension)
+Trong hầu hết các trường hợp, lệnh `mov` chỉ cập nhật đúng số byte được chỉ định. Tuy nhiên:
+*   **Khi `movl` có đích đến là một thanh ghi:** Nó sẽ tự động đặt 4 byte cao (32-bit phía trên) của thanh ghi đó về **0**. 
+*   **Tại sao?** Đây là quy ước của kiến trúc x86-64: mọi lệnh tạo ra giá trị 32-bit cho một thanh ghi đều sẽ xóa phần 32-bit cao về 0.
+
+---
+
+### Ví dụ về các tổ hợp lệnh `MOV`
+
+Dưới đây là 5 cách kết hợp nguồn/đích phổ biến:
+
+| STT | Mã ATT (Sách) | Mã Intel (IDA Pro) | Loại (Nguồn -> Đích) | Kích thước |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | `movl $0x4050, %eax` | `mov eax, 4050h` | Immediate -> Register | 4 bytes |
+| 2 | `movw %bp, %sp` | `mov sp, bp` | Register -> Register | 2 bytes |
+| 3 | `movb (%rdi, %rcx), %al` | `mov al, [rdi + rcx]` | Memory -> Register | 1 byte |
+| 4 | `movb $-17, (%rsp)` | `mov byte ptr [rsp], 0EFh` | Immediate -> Memory | 1 byte |
+| 5 | `movq %rax, -12(%rbp)` | `mov [rbp - 12], rax` | Register -> Memory | 8 bytes |
+
+---
+
+### Lệnh `movabsq` (Move Absolute Quadword)
+
+Lệnh `movq` thông thường chỉ có thể nhận giá trị tức thời (immediate) tối đa là **32-bit** (sau đó nó sẽ thực hiện *sign-extend* để thành 64-bit).
+
+*   **Khi nào dùng `movabsq`?** Khi bạn cần nạp một hằng số 64-bit cực lớn (arbitrary 64-bit immediate) trực tiếp vào thanh ghi.
+*   **Đặc điểm:** 
+    *   Nguồn: Phải là một giá trị tức thời 64-bit.
+    *   Đích: **Bắt buộc** phải là một thanh ghi (không thể ghi trực tiếp vào bộ nhớ).
+*   **Trong IDA Pro:** IDA thường tự nhận diện và hiển thị là `mov rax, <giá trị_64_bit>`.
+
+---
+
+Tiếp theo (Hình 3.5 và 3.6), chúng ta sẽ xem xét hai lớp lệnh `MOV` dùng để sao chép dữ liệu từ một nguồn nhỏ (ví dụ 1 byte) sang một đích lớn hơn (ví dụ 8 byte), bao gồm các cơ chế bù không (zero-extension) và bù dấu (sign-extension).
+
+---
+
+### Ví dụ minh họa: Cách lệnh di chuyển dữ liệu thay đổi thanh ghi đích (Aside)
+
+Để hiểu rõ hơn về quy tắc cập nhật các byte bậc cao (upper bytes) của thanh ghi, hãy xem xét chuỗi lệnh sau đây. Giả sử ban đầu thanh ghi `%rax` được nạp một giá trị mẫu:
+
+| STT | Lệnh (ATT) | Lệnh (Intel/IDA) | Giá trị của `%rax` (Dạng Hex) | Giải thích tác động |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | `movabsq $0x0011223344556677, %rax` | `mov rax, 11223344556677h` | `0011223344556677` | Khởi tạo giá trị 64-bit ban đầu. |
+| 2 | `movb $-1, %al` | `mov al, 0FFh` | `00112233445566FF` | **Chỉ đổi 1 byte thấp** (`al`). Các byte khác giữ nguyên. |
+| 3 | `movw $-1, %ax` | `mov ax, 0FFFFh` | `001122334455FFFF` | **Chỉ đổi 2 byte thấp** (`ax`). Các byte khác giữ nguyên. |
+| 4 | `movl $-1, %eax` | `mov eax, 0FFFFFFFFh` | `00000000FFFFFFFF` | **Ghi 4 byte thấp VÀ xóa 4 byte cao về 0**. (Quy tắc Zero-extend). |
+| 5 | `movq $-1, %rax` | `mov rax, 0FFFFFFFFFFFFFFFFh`| `FFFFFFFFFFFFFFFF` | **Ghi toàn bộ 8 byte**. |
+
+**Điểm cần lưu ý đặc biệt khi dùng IDA Pro:**
+*   Lệnh `movl` (dòng 4) thực hiện quy ước của x86-64: bất kỳ lệnh nào ghi vào phần 32-bit của thanh ghi (ví dụ `eax`) đều sẽ tự động xóa sạch phần 32-bit cao của thanh ghi 64-bit tương ứng (`rax`) về 0.
+
+---
+
+### Hình 3.5: Các lệnh di chuyển dữ liệu bù không (Zero-extending)
+
+<img width="847" height="321" alt="image" src="https://github.com/user-attachments/assets/9bb10a4f-0c8a-4a4a-9853-1793be47b699" />
+
+
+Khi bạn muốn copy dữ liệu từ một nguồn nhỏ (1 hoặc 2 bytes) sang một đích lớn hơn (thanh ghi), bạn cần quyết định xem các byte còn lại của đích sẽ được lấp đầy như thế nào. Lớp lệnh **`MOVZ`** sẽ lấp đầy các byte còn lại bằng số **0**.
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Hiệu ứng | Mô tả |
+| :--- | :--- | :--- | :--- |
+| `movzbw S, R` | `movzx r16, r/m8` | $R \leftarrow \text{ZeroExtend}(S)$ | Chép 1 byte sang 2 bytes. |
+| `movzbl S, R` | `movzx r32, r/m8` | $R \leftarrow \text{ZeroExtend}(S)$ | Chép 1 byte sang 4 bytes. |
+| `movzwl S, R` | `movzx r32, r/m16`| $R \leftarrow \text{ZeroExtend}(S)$ | Chép 2 bytes sang 4 bytes. |
+| `movzbq S, R` | `movzx r64, r/m8` | $R \leftarrow \text{ZeroExtend}(S)$ | Chép 1 byte sang 8 bytes. |
+| `movzwq S, R` | `movzx r64, r/m16`| $R \leftarrow \text{ZeroExtend}(S)$ | Chép 2 bytes sang 8 bytes. |
+
+**Quy tắc đặt tên lệnh:**
+*   Trong cú pháp ATT (sách), hai ký tự cuối chỉ định kích thước: Ký tự thứ nhất là **Nguồn**, ký tự thứ hai là **Đích**.
+    *   `b`: byte (1 byte)
+    *   `w`: word (2 bytes)
+    *   `l`: double word (4 bytes)
+    *   `q`: quad word (8 bytes)
+*   Trong IDA Pro (Intel), lệnh này được gọi là **`MOVZX`** (Move with Zero-eXtend).
+
+---
+
+### Phân tích bổ sung
+
+1.  **Nguồn và Đích:** Nguồn (`S`) có thể là thanh ghi hoặc địa chỉ bộ nhớ. Đích (`R`) **bắt buộc phải là thanh ghi**.
+2.  **Tại sao không có lệnh `movzlq`?** 
+    *   Sách chỉ ra rằng: Chúng ta không cần lệnh để bù không từ 4 byte sang 8 byte (double word to quad word). 
+    *   Lý do: Như đã thấy ở ví dụ trên, lệnh `movl` bình thường khi ghi vào thanh ghi 32-bit đã tự động thực hiện việc bù không cho 4 byte cao của thanh ghi 64-bit rồi.
+3.  **Lớp lệnh đối nghịch:** Ngoài `movz` (bù không), chúng ta còn lớp lệnh `movs` (bù dấu - sign extension) để xử lý các số nguyên có dấu, sẽ được trình bày ngay sau đây.
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 213, tập trung vào lớp lệnh di chuyển dữ liệu có bù dấu (**Sign-extension**) và lệnh đặc biệt `cltq`. Đây là những lệnh tối quan trọng khi làm việc với các kiểu dữ liệu có dấu (signed integers) như `int` sang `long` trong C.
+
+---
+
+### Hình 3.6: Các lệnh di chuyển dữ liệu bù dấu (Sign-extending)
+
+Lớp lệnh **`MOVS`** sao chép dữ liệu từ nguồn nhỏ sang đích lớn hơn, nhưng khác với `MOVZ`, nó lấp đầy các byte còn lại bằng cách **sao chép bit dấu** (bit quan trọng nhất - MSB) của giá trị nguồn.
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Hiệu ứng | Mô tả |
+| :--- | :--- | :--- | :--- |
+| `movsbw` | `movsx r16, r/m8` | $R \leftarrow \text{SignExtend}(S)$ | Chép 1 byte sang 2 bytes (có dấu). |
+| `movsbl` | `movsx r32, r/m8` | $R \leftarrow \text{SignExtend}(S)$ | Chép 1 byte sang 4 bytes (có dấu). |
+| `movswl` | `movsx r32, r/m16`| $R \leftarrow \text{SignExtend}(S)$ | Chép 2 bytes sang 4 bytes (có dấu). |
+| `movsbq` | `movsx r64, r/m8` | $R \leftarrow \text{SignExtend}(S)$ | Chép 1 byte sang 8 bytes (có dấu). |
+| `movswq` | `movsx r64, r/m16`| $R \leftarrow \text{SignExtend}(S)$ | Chép 2 bytes sang 8 bytes (có dấu). |
+| `movslq` | **`movsxd r64, r/m32`** | $R \leftarrow \text{SignExtend}(S)$ | Chép 4 bytes sang 8 bytes (có dấu). |
+| **`cltq`** | **`cdqe`** | `%rax \leftarrow \text{SignExtend}(\%eax)` | Mở rộng dấu `%eax` vào `%rax`. |
+
+**Lưu ý quan trọng:**
+*   Trong IDA Pro (Intel), hậu tố `x` thường được thêm vào (`movsx`). Riêng trường hợp từ 4 byte (double word) lên 8 byte (quad word), Intel sử dụng lệnh **`movsxd`**.
+*   **Sự thiếu vắng của `movzlq`:** Như đã nhắc ở trang trước, không cần lệnh bù không 4-sang-8 vì lệnh `movl` bình thường đã làm việc đó rồi. Tuy nhiên, với bù dấu, ta **bắt buộc** phải có lệnh `movslq` (hoặc `movsxd` trong IDA).
+
+---
+
+### Lệnh `cltq` (Convert Long to Quadword)
+
+Đây là một lệnh không có toán hạng, nó luôn tác động cố định trên hai thanh ghi `%eax` và `%rax`.
+*   **Chức năng:** Nó thực hiện chính xác việc mở rộng dấu từ `%eax` lên `%rax`.
+*   **So sánh:** Lệnh này có kết quả y hệt như lệnh `movslq %eax, %rax` (ATT) hay `movsxd rax, eax` (Intel).
+*   **Tại sao tồn tại?** Nó có cách mã hóa (encoding) gọn nhẹ hơn (chỉ tốn ít byte hơn trong mã máy), nên thường được các trình biên dịch ưu tiên sử dụng.
+*   **Trong IDA Pro:** Bạn sẽ thấy lệnh này hiển thị là **`cdqe`**.
+
+---
+
+### Practice Problem 3.2: Xác định hậu tố lệnh dựa trên toán hạng
+
+<img width="533" height="210" alt="image" src="https://github.com/user-attachments/assets/6d2db509-2a77-49f6-83e3-5412d60c7ad6" />
+
+
+<details>
+<summary><b>Nhấn để xem giải đề và phân tích kích thước</b></summary>
+
+Dựa trên kích thước của các thanh ghi đích hoặc nguồn, ta xác định hậu tố (`b`, `w`, `l`, `q`) cho lệnh `mov`:
+
+| Lệnh Assembly (Chưa có hậu tố) | Hậu tố đúng | Lý do (Kích thước) |
+| :--- | :--- | :--- |
+| `mov %eax, (%rsp)` | **`movl`** | `%eax` là 4 bytes. |
+| `mov (%rax), %dx` | **`movw`** | `%dx` là 2 bytes. |
+| `mov $0xFF, %bl` | **`movb`** | `%bl` là 1 byte. |
+| `mov (%rsp,%rdx,4), %dl` | **`movb`** | `%dl` là 1 byte. |
+| `mov (%rdx), %rax` | **`movq`** | `%rax` là 8 bytes. |
+| `mov %dx, (%rax)` | **`movw`** | `%dx` là 2 bytes. |
+
+</details>
+
+---
+
+### So sánh các lệnh di chuyển Byte (Aside)
+
+Ví dụ sau minh họa sự khác biệt về cách các lệnh `movb`, `movsbq`, và `movzbq` thay đổi các byte bậc cao của thanh ghi đích. 
+Giả sử ban đầu: `%rax = 0011223344556677` và `%dl = AA` (hệ nhị phân của `AA` là `10101010`, có bit dấu là **1**).
+
+| STT | Lệnh (ATT) | Lệnh (Intel/IDA) | Giá trị của `%rax` (Hex) | Giải thích |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | `movb %dl, %al` | `mov al, dl` | `00112233445566AA` | **Không đổi** các byte khác, chỉ đổi 1 byte thấp. |
+| 2 | `movsbq %dl, %rax` | `movsx rax, dl` | `FFFFFFFFFFFFFFAA` | **Bù dấu**: Vì bit cao nhất của `AA` là 1, nên 7 byte còn lại được lấp đầy bởi `F`. |
+| 3 | `movzbq %dl, %rax` | `movzx rax, dl` | `00000000000000AA` | **Bù không**: 7 byte còn lại được lấp đầy bởi số 0. |
+
+---
+
+### Practice Problem 3.3: Chẩn đoán lỗi mã Assembly
+
+<img width="539" height="235" alt="image" src="https://github.com/user-attachments/assets/391175f3-1a93-440e-b63c-896bb8931923" />
+
+
+<details>
+<summary><b>Nhấn để xem giải thích các lỗi sai</b></summary>
+
+Mỗi dòng lệnh dưới đây đều gây lỗi khi biên dịch. Dưới đây là lý do:
+
+| Lệnh lỗi (ATT) | Lý do sai |
+| :--- | :--- |
+| `movb $0xF, (%ebx)` | Không thể dùng thanh ghi 32-bit (`%ebx`) làm địa chỉ trong chế độ 64-bit (phải dùng `%rbx`). |
+| `movl %rax, (%rsp)` | Sai kích thước: `%rax` là 8 bytes, nhưng `movl` chỉ dành cho 4 bytes. |
+| `movw (%rax), 4(%rsp)` | Lỗi **Memory-to-Memory**: Không thể copy trực tiếp từ vùng nhớ này sang vùng nhớ khác. |
+| `movb %al, %sl` | Tên thanh ghi sai: Thanh ghi 8-bit bậc thấp của `%rsi` phải là `%sil`, không phải `%sl`. |
+| `movq %rax, $0x123` | Đích đến không thể là một hằng số (Immediate). |
+| `movl %eax, %rdx` | Sai kích thước: Đích của lệnh 4-byte (`movl`) phải là thanh ghi 32-bit (ví dụ `%edx`). |
+| `movb %si, 8(%rbp)` | Sai kích thước: `%si` là 2 bytes, nhưng lệnh `movb` chỉ dành cho 1 byte. |
+
+</details>
+
+---
+
+### 3.4.3 Data Movement Example (Ví dụ di chuyển dữ liệu)
+
+Hãy xem xét hàm `exchange` dưới đây. Đây là một ví dụ điển hình về việc sử dụng các lệnh di chuyển dữ liệu để hoán đổi giá trị.
+
+**Quy ước quan trọng trước khi phân tích:**
+1.  **Tham số:** Các tham số được truyền qua thanh ghi.
+    *   Tham số thứ 1 (`xp` - con trỏ): nằm trong `%rdi`.
+    *   Tham số thứ 2 (`y` - giá trị): nằm trong `%rsi`.
+2.  **Giá trị trả về:** Được lưu vào thanh ghi `%rax`.
+3.  **Lệnh `ret`:** Dùng để quay trở về hàm đã gọi.
+
+#### (a) Mã nguồn C
+```c
+long exchange(long *xp, long y)
+{
+    long x = *xp;
+    *xp = y;
+    return x;
+}
+```
+
+#### Phân tích sơ bộ:
+Hàm `exchange` được triển khai chỉ với 3 lệnh: hai lệnh di chuyển dữ liệu (`movq`) và một lệnh trả về (`ret`).
+
+### Phân tích chi tiết hàm `exchange`
+
+#### (b) Mã Assembly (Đối chiếu ATT và Intel/IDA Pro)
+
+Dựa trên quy ước tham số: `xp` nằm trong `%rdi`, `y` nằm trong `%rsi`.
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `exchange:` | `exchange:` | Nhãn bắt đầu hàm. |
+| 2 | `movq (%rdi), %rax` | `mov rax, [rdi]` | **Đọc từ bộ nhớ**: Lấy giá trị tại địa chỉ `xp` lưu vào `%rax` (tương ứng `x = *xp`). |
+| 3 | `movq %rsi, (%rdi)` | `mov [rdi], rsi` | **Ghi vào bộ nhớ**: Chép giá trị `y` vào địa chỉ mà `xp` trỏ tới (tương ứng `*xp = y`). |
+| 4 | `ret` | `retn` | Trả về. Lúc này `%rax` đã chứa `x`, nên kết quả trả về đúng là `x`. |
+
+---
+
+### Các bài học quan trọng về dịch ngược:
+
+1.  **Bản chất của con trỏ:** "Con trỏ" trong C thực chất chỉ là các **địa chỉ bộ nhớ**. Việc giải mã con trỏ (dereferencing) trong Assembly đơn giản là đặt thanh ghi chứa địa chỉ đó vào trong dấu ngoặc vuông (Intel: `[rdi]`, ATT: `(%rdi)`).
+2.  **Biến cục bộ:** Các biến cục bộ (như `long x`) thường được trình biên dịch giữ lại trong **thanh ghi** thay vì cấp phát trên bộ nhớ (Stack) nếu có thể. Điều này giúp tốc độ truy cập nhanh hơn nhiều so với RAM.
+3.  **Giá trị trả về:** Thay vì tốn thêm lệnh để di chuyển dữ liệu, trình biên dịch khôn ngoan nạp thẳng giá trị `*xp` vào `%rax` ngay từ đầu. Vì `%rax` là thanh ghi mặc định cho giá trị trả về, logic `return x` được thực hiện "miễn phí".
+
+---
+
+### Practice Problem 3.4: Chuyển đổi kiểu dữ liệu và Di chuyển dữ liệu
+
+Bài tập này yêu cầu chọn cặp lệnh di chuyển dữ liệu phù hợp để thực hiện phép toán:
+`*dp = (dest_t) *sp;`
+Với `sp` là con trỏ kiểu `src_t`, `dp` là con trỏ kiểu `dest_t`.
+
+<details>
+<summary><b>Nhấn để xem phân tích các trường hợp (Đang cập nhật từ trang sau)</b></summary>
+
+*Lưu ý: Nội dung bức ảnh này mới chỉ đưa ra phần đề bài và thiết lập. Tôi sẽ trình bày chi tiết lời giải khi bạn gửi ảnh trang tiếp theo chứa bảng các trường hợp cụ thể (như `long` sang `char`, `unsigned` sang `int`, v.v.).*
+
+**Logic chung:**
+1.  Dùng một lệnh để đọc dữ liệu từ `*sp` vào một thanh ghi (có thể cần bù không hoặc bù dấu tùy kiểu dữ liệu).
+2.  Dùng một lệnh để ghi từ thanh ghi đó vào `*dp`.
+
+</details>
+
+---
+
+*(Nội dung bức ảnh dừng lại ở phần giới thiệu Practice Problem 3.4)*.
 
 <tạm dừng>

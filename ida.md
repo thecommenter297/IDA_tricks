@@ -124,25 +124,51 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 
 **Mã Assembly tương ứng (Dữ liệu trả về lưu vào thanh ghi A):**
 
-**Cú pháp AT&T (Trong sách):**
-```asm
-; E in %rdx, i in %rcx
-movq    %rdx, %rax               ; Biểu thức E (Lấy địa chỉ)
-movl    (%rdx), %eax             ; Biểu thức E[0] (Lấy giá trị tại xE)
-movl    (%rdx, %rcx, 4), %eax    ; Biểu thức E[i] (Lấy giá trị tại xE + 4*i)
-leaq    8(%rdx), %rax            ; Biểu thức &E[2] (Tính địa chỉ xE + 8)
-leaq    -4(%rdx, %rcx, 4), %rax  ; Biểu thức E+i-1 (Tính địa chỉ xE + 4*i - 4)
-```
+**1. Lấy địa chỉ của mảng (Biểu thức C: `E`)**
+*Dùng để gán con trỏ hoặc truyền tham số.*
 
-**Cú pháp Intel (Trong IDA):**
-```asm
-; E in rdx, i in rcx
-mov     rax, rdx                 ; Biểu thức E
-mov     eax, dword ptr [rdx]     ; Biểu thức E[0]
-mov     eax, dword ptr [rdx + rcx * 4] ; Biểu thức E[i]
-lea     rax, [rdx + 8]           ; Biểu thức &E[2]
-lea     rax, [rdx + rcx * 4 - 4] ; Biểu thức E+i-1
-```
+*   **AT&T:**
+```movq %rdx, %rax```
+*   **Intel:**
+```mov rax, rdx```
+*   **Kết quả:** `%rax` chứa địa chỉ $x_E$.
+
+**2. Truy cập phần tử đầu tiên (Biểu thức C: `E[0]`)**
+*Đọc giá trị từ bộ nhớ.*
+
+*   **AT&T:**
+```movl (%rdx), %eax```
+*   **Intel:**
+```mov eax, dword ptr [rdx]```
+*   **Kết quả:** `%eax` chứa giá trị tại $M[x_E]$.
+
+**3. Truy cập phần tử thứ i (Biểu thức C: `E[i]`)**
+*Sử dụng hệ số tỷ lệ (Scale factor) là 4.*
+
+*   **AT&T:**
+```movl (%rdx, %rcx, 4), %eax```
+*   **Intel:**
+```mov eax, dword ptr [rdx + rcx * 4]```
+*   **Kết quả:** `%eax` chứa giá trị tại $M[x_E + 4i]$.
+
+**4. Lấy địa chỉ của phần tử thứ 2 (Biểu thức C: `&E[2]`)**
+*Tính toán địa chỉ mà không truy cập bộ nhớ.*
+
+*   **AT&T:**
+```leaq 8(%rdx), %rax```
+*   **Intel:**
+```lea rax, [rdx + 8]```
+*   **Kết quả:** `%rax` chứa địa chỉ $x_E + 8$.
+
+**5. Toán tử con trỏ phức tạp (Biểu thức C: `E + i - 1`)**
+*Thường xuất hiện khi trình biên dịch tối ưu hóa vòng lặp.*
+
+*   **AT&T:**
+```leaq -4(%rdx, %rcx, 4), %rax```
+*   **Intel:**
+```lea rax, [rdx + rcx * 4 - 4]```
+*   **Kết quả:** `%rax` chứa địa chỉ $x_E + 4i - 4$.
+
 
 ### 2. Lệnh LEA (Load Effective Address) - "Vũ khí" tính toán
 
@@ -162,7 +188,7 @@ lea     rax, [rdx + rdx * 4 + 7] ; Tính rax = 5x + 7
 
 ---
 
-### TỔNG KẾT VỀ VIỆC RETYPE TRONG IDA
+### -> RETYPE TRONG IDA
 
 Khi bạn thấy các lệnh truy cập bộ nhớ dạng phức tạp trong IDA, hãy sử dụng các manh mối sau để Retype:
 

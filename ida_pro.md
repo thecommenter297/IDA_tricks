@@ -896,9 +896,27 @@ Dựa trên quy ước tham số: `xp` nằm trong `%rdi`, `y` nằm trong `%rsi
 
 ### Practice Problem 3.4: Chuyển đổi kiểu dữ liệu và Di chuyển dữ liệu
 
-Bài tập này yêu cầu chọn cặp lệnh di chuyển dữ liệu phù hợp để thực hiện phép toán:
+<img width="429" height="819" alt="image" src="https://github.com/user-attachments/assets/1677ba08-8d44-4fe6-9ea4-5452d3330067" />
+
+<br>
+
+> Do cái đề quá dài và đề hơi mờ nên mình để cả đề dưới dạng tiếng Việt ở dưới
+
+**Đề bài:**
+Giả sử ta có hai biến con trỏ `sp` và `dp` được khai báo như sau:
+```c
+src_t *sp;
+dest_t *dp;
+```
+Trong đó `src_t` và `dest_t` là các kiểu dữ liệu được định nghĩa bằng `typedef`. Chúng ta cần sử dụng **hai lệnh** di chuyển dữ liệu phù hợp để thực hiện phép gán:
 `*dp = (dest_t) *sp;`
-Với `sp` là con trỏ kiểu `src_t`, `dp` là con trỏ kiểu `dest_t`.
+
+**Giả định hệ thống:**
+*   Giá trị của `sp` (địa chỉ nguồn) nằm trong thanh ghi `%rdi`.
+*   Giá trị của `dp` (địa chỉ đích) nằm trong thanh ghi `%rsi`.
+*   **Lệnh 1:** Đọc từ bộ nhớ vào một phần phù hợp của thanh ghi `%rax` (`%rax`, `%eax`, `%ax`, hoặc `%al`) và thực hiện chuyển đổi kiểu dữ liệu (bù không hoặc bù dấu nếu cần).
+*   **Lệnh 2:** Ghi phần tương ứng đó của thanh ghi `%rax` vào bộ nhớ tại địa chỉ đích.
+*   **Quy tắc chuyển đổi (Section 2.2.6):** Khi thay đổi cả **kích thước** và **tính có dấu (signedness)**, phép toán phải thực hiện **thay đổi kích thước trước**.
 
 <details>
 <summary><b>Nhấn để xem phân tích các trường hợp</b></summary>
@@ -925,12 +943,6 @@ Giả sử `sp` (nguồn) nằm trong `%rdi` và `dp` (đích) nằm trong `%rsi
 
 ---
 
-<tiếp tục>
-
-Dưới đây là nội dung từ trang 216, bao gồm phần giải thích về con trỏ dành cho người mới và lời giải chi tiết cho bảng chuyển đổi kiểu dữ liệu trong bài tập 3.4.
-
----
-
 ### Kiến thức bổ sung: Ví dụ về con trỏ trong C (Aside)
 
 Hàm `exchange` cung cấp một minh họa tốt về cách sử dụng con trỏ. 
@@ -952,13 +964,187 @@ Việc truyền con trỏ `&a` vào hàm cho phép hàm `exchange` thay đổi g
 
 ### Practice Problem 3.5
 
-Bạn được cung cấp thông tin sau về một hàm có prototype:
+<img width="578" height="404" alt="image" src="https://github.com/user-attachments/assets/0a7e10db-ab7f-44e2-9212-f3c847ff9246" />
+
+
+<details>
+   <summary>Bấm vào để xem lời giải</summary>
+   <br>
+   
+Mã Assembly tương ứng được tạo ra như sau:
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Phân tích bước đi của dữ liệu |
+| :--- | :--- | :--- | :--- |
+| 1 | `movq (%rdi), %r8` | `mov r8, [rdi]` | Đọc `*xp` vào thanh ghi `%r8`. |
+| 2 | `movq (%rsi), %rcx` | `mov rcx, [rsi]` | Đọc `*yp` vào thanh ghi `%rcx`. |
+| 3 | `movq (%rdx), %rax` | `mov rax, [rdx]` | Đọc `*zp` vào thanh ghi `%rax`. |
+| 4 | `movq %r8, (%rsi)` | `mov [rsi], r8` | Ghi giá trị (cũ của `*xp`) vào địa chỉ `yp`. |
+| 5 | `movq %rcx, (%rdx)` | `mov [rdx], rcx` | Ghi giá trị (cũ của `*yp`) vào địa chỉ `zp`. |
+| 6 | `movq %rax, (%rdi)` | `mov [rdi], rax` | Ghi giá trị (cũ của `*zp`) vào địa chỉ `xp`. |
+| 7 | `ret` | `retn` | Trả về. |
+
+---
+
+### Phân tích logic từng bước (Step-by-Step)
+
+Để viết lại mã C, ta hãy đặt tên các biến cục bộ tương ứng với các thanh ghi tạm thời mà trình biên dịch đã sử dụng:
+
+1.  **Lấy dữ liệu nguồn:**
+    *   `long temp_x = *xp;` (Lệnh 1 sử dụng `%r8`)
+    *   `long temp_y = *yp;` (Lệnh 2 sử dụng `%rcx`)
+    *   `long temp_z = *zp;` (Lệnh 3 sử dụng `%rax`)
+
+2.  **Hoán đổi vị trí (Cyclic Swap):**
+    *   `*yp = temp_x;` (Lệnh 4: lấy giá trị cũ của `xp` ghi vào `yp`)
+    *   `*zp = temp_y;` (Lệnh 5: lấy giá trị cũ của `yp` ghi vào `zp`)
+    *   `*xp = temp_z;` (Lệnh 6: lấy giá trị cũ của `zp` ghi vào `xp`)
+
+---
+
+### Lời giải mã C hoàn chỉnh
+
+Dựa trên phân tích luồng dữ liệu ở trên, đây là nội dung hàm `decode1` trong C:
 
 ```c
-void decode1(long *xp, long *yp, long *zp);
+void decode1(long *xp, long *yp, long *zp) 
+{
+    long x = *xp;
+    long y = *yp;
+    long z = *zp;
+
+    *yp = x;
+    *zp = y;
+    *xp = z;
+}
 ```
 
-*(Nội dung bức ảnh dừng lại ở phần giới thiệu Practice Problem 3.5)*.
+---
+
+### IDA Pro Insights (Góc nhìn dịch ngược)
+
+Khi bạn gặp một đoạn mã như thế này trong IDA Pro, hãy chú ý các đặc điểm sau:
+*   **Ba tham số đầu tiên:** IDA sẽ tự nhận diện `%rdi`, `%rsi`, `%rdx` là `arg_0`, `arg_1`, `arg_2` (hoặc tên thực nếu có thông tin debug).
+*   **Thanh ghi tạm:** Việc trình biên dịch sử dụng `%r8`, `%rcx`, `%rax` cho thấy đây là 3 biến cục bộ kiểu `long` (8-byte).
+*   **Mẫu hình (Pattern):** Đây là mẫu hình của một phép **hoán đổi vòng tròn (cyclic swap)**. Dữ liệu được "nhấc" hết lên các thanh ghi trước, sau đó mới "đặt" ngược lại vào các địa chỉ bộ nhớ theo thứ tự mới. Điều này giúp tránh việc ghi đè làm mất dữ liệu trước khi kịp sao lưu.
+
+---
+
+</details>
+
+---
+
+### 3.4.4 Pushing and Popping Stack Data (Đẩy vào và Lấy ra khỏi Ngăn xếp)
+
+Ngăn xếp (Stack) đóng vai trò sống còn trong việc xử lý các lời gọi thủ tục (procedure calls). Trong x86-64, ngăn xếp là một vùng nhớ hoạt động theo nguyên lý **LIFO** (Vào sau, Ra trước - Last-In, First-Out).
+
+#### Đặc điểm của Stack trong x86-64:
+*   **Hướng phát triển:** Ngăn xếp phát triển **ngược xuống (downward)**, nghĩa là các phần tử mới sẽ được đẩy vào các địa chỉ bộ nhớ thấp hơn.
+*   **Đỉnh ngăn xếp (Stack Top):** Là phần tử có địa chỉ **thấp nhất** trong tất cả các phần tử thuộc ngăn xếp.
+*   **Thanh ghi `%rsp` (Stack Pointer):** Luôn lưu trữ địa chỉ của phần tử nằm ở đỉnh ngăn xếp.
+
+---
+
+### Hình 3.8: Các lệnh Push và Pop
+
+<img width="753" height="247" alt="image" src="https://github.com/user-attachments/assets/54e911ef-fd91-4d07-886f-21652d83b034" />
+
+
+Mỗi lệnh này chỉ nhận một toán hạng duy nhất: nguồn dữ liệu để đẩy vào (push) hoặc đích đến để lấy ra (pop).
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Hiệu ứng (Logic bên dưới) | Mô tả |
+| :--- | :--- | :--- | :--- |
+| `pushq S` | `push S` | `R[%rsp] ← R[%rsp] - 8;`<br>`M[R[%rsp]] ← S` | Giảm `%rsp` đi 8, sau đó ghi giá trị `S` vào địa chỉ mới của `%rsp`. |
+| `popq D` | `pop D` | `D ← M[R[%rsp]];`<br>`R[%rsp] ← R[%rsp] + 8` | Đọc giá trị tại đỉnh ngăn xếp vào `D`, sau đó tăng `%rsp` thêm 8. |
+
+---
+
+### Hình 3.9: Minh họa hoạt động của Ngăn xếp
+
+<img width="1002" height="757" alt="image" src="https://github.com/user-attachments/assets/28fa2e01-82ed-4840-8d1a-c87b19c911e5" />
+
+
+Theo quy ước, chúng ta vẽ ngăn xếp "ngược", với phần đỉnh (top) nằm ở dưới cùng của hình vẽ.
+
+1.  **Trạng thái ban đầu:** `%rsp` đang trỏ tại địa chỉ `0x108`.
+2.  **Lệnh `pushq %rax` (với `%rax = 0x123`):**
+    *   Thanh ghi `%rsp` giảm từ `0x108` xuống `0x100`.
+    *   Giá trị `0x123` được ghi vào địa chỉ `0x100`.
+3.  **Lệnh `popq %rdx`:**
+    *   Giá trị `0x123` được đọc từ địa chỉ `0x100` và lưu vào thanh ghi `%rdx`.
+    *   Thanh ghi `%rsp` tăng lại từ `0x100` lên `0x108`.
+
+**Lưu ý quan trọng:**
+*   Giá trị `0x123` vẫn còn tồn tại ở địa chỉ bộ nhớ `0x100` cho đến khi nó bị ghi đè bởi một thao tác `push` khác. Tuy nhiên, sau lệnh `pop`, địa chỉ đó không còn được coi là thuộc về ngăn xếp nữa vì `%rsp` đã trỏ đi nơi khác.
+
+---
+
+### IDA Pro Insights (Góc nhìn dịch ngược)
+
+Khi quan sát trong IDA Pro, bạn cần lưu ý:
+*   **Bản chất lệnh:** Lệnh `push rax` thực chất là một cách viết tắt của cặp lệnh:
+    ```assembly
+    sub rsp, 8
+    mov [rsp], rax
+    ```
+*   **Bản chất lệnh Pop:** Lệnh `pop rdx` thực chất là viết tắt của:
+    ```assembly
+    mov rdx, [rsp]
+    add rsp, 8
+    ```
+*   **Function Prologue/Epilogue:** IDA thường hiển thị rất nhiều lệnh `push` ở đầu hàm (để sao lưu các thanh ghi *callee-saved*) và các lệnh `pop` tương ứng ở cuối hàm (để khôi phục trạng thái bộ xử lý trước khi `ret`).
+*   **Địa chỉ ảo:** Trong IDA, bạn có thể nhấn vào `rsp` hoặc xem cửa sổ "Stack View" để thấy các giá trị đang nằm trên ngăn xếp được biểu diễn trực quan tương tự như Hình 3.9.
+
+---
+
+### Phân tích sâu về cơ chế Push và Pop
+
+Lệnh `pushq` và `popq` thực chất là các phím tắt cho chuỗi lệnh tính toán con trỏ và di chuyển dữ liệu.
+
+#### 1. Cơ chế của `pushq %rbp`
+Hành vi của lệnh này tương đương với cặp lệnh sau:
+
+| AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Mô tả bước thực hiện |
+| :--- | :--- | :--- |
+| `subq $8, %rsp` | `sub rsp, 8` | Giảm con trỏ ngăn xếp (Tạo chỗ trống). |
+| `movq %rbp, (%rsp)` | `mov [rsp], rbp` | Lưu giá trị vào đỉnh ngăn xếp mới. |
+
+*   **Lợi ích:** Lệnh `pushq` chỉ tốn **1 byte** trong mã máy, trong khi cặp lệnh tương đương tốn tới 8 bytes.
+
+#### 2. Cơ chế của `popq %rax`
+Hành vi của lệnh này tương đương với cặp lệnh sau:
+
+| AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Mô tả bước thực hiện |
+| :--- | :--- | :--- |
+| `movq (%rsp), %rax` | `mov rax, [rsp]` | Đọc giá trị từ đỉnh ngăn xếp vào thanh ghi. |
+| `addq $8, %rsp` | `add rsp, 8` | Tăng con trỏ ngăn xếp (Giải phóng chỗ). |
+
+#### 3. Truy cập ngăn xếp tùy ý
+Vì ngăn xếp nằm trong cùng một vùng bộ nhớ với mã chương trình và dữ liệu khác, chúng ta có thể truy cập bất kỳ vị trí nào trong ngăn xếp bằng các phương pháp tham chiếu bộ nhớ tiêu chuẩn.
+*   **Ví dụ:** Lệnh `movq 8(%rsp), %rdx` (ATT) hoặc `mov rdx, [rsp+8]` (Intel) sẽ sao chép phần tử thứ hai của ngăn xếp vào thanh ghi `%rdx` mà không làm thay đổi giá trị của `%rsp`.
+
+---
+
+## 3.5 Arithmetic and Logical Operations (Các phép toán số học và logic)
+
+Hình 3.10 (ở trang sau) liệt kê các phép toán số nguyên và logic trong x86-64. Hầu hết các phép toán này đều có các biến thể kích thước khác nhau (ngoại trừ `leaq`).
+
+Các phép toán được chia thành 4 nhóm:
+1.  **Load effective address:** Tính toán địa chỉ hiệu dụng.
+2.  **Unary:** Các phép toán một toán hạng (đơn phân).
+3.  **Binary:** Các phép toán hai toán hạng (nhị phân).
+4.  **Shifts:** Các phép toán dịch bit.
+
+### 3.5.1 Load Effective Address (Nạp địa chỉ hiệu dụng - `leaq`)
+
+Lệnh **`leaq`** (Load Effective Address) thực chất là một biến thể của lệnh `movq`. 
+*   **Định dạng:** Nó có dạng giống như một lệnh đọc từ bộ nhớ vào thanh ghi.
+*   **Điểm khác biệt cốt lõi:** Thay vì đọc dữ liệu từ địa chỉ được tính toán, nó **nạp chính địa chỉ đó** vào thanh ghi đích.
+
+**IDA Pro Insight:** 
+*   Trong cú pháp Intel, lệnh này là **`lea`**.
+*   Khi bạn thấy `lea rax, [rdi+rsi*4]`, bộ xử lý không hề truy cập vào RAM tại địa chỉ đó. Nó chỉ thực hiện phép toán `rax = rdi + (rsi * 4)` và lưu kết quả vào `rax`. Trình biên dịch thường dùng lệnh này như một "mẹo" để thực hiện các phép toán cộng và nhân nhanh chóng mà không cần dùng các lệnh số học nặng nề.
+
+*(Nội dung bức ảnh dừng lại ở phần giới thiệu về bản chất của lệnh leaq)*.
 
 ---
 

@@ -234,12 +234,6 @@ Khi bạn thấy các lệnh truy cập bộ nhớ dạng phức tạp trong IDA
 
 ---
 
-Tiếp tục với mục tiêu hỗ trợ bạn sử dụng IDA Pro, chúng ta sẽ bước sang một phần cực kỳ quan trọng: **Luồng điều khiển**.
-
-Trong IDA, việc hiểu luồng điều khiển không chỉ giúp bạn nắm được logic của chương trình mà còn là "manh mối" duy nhất để bạn xác định xem một biến là **có dấu (signed)** hay **không dấu (unsigned)** — điều mà IDA Decompiler thường xuyên nhận diện sai.
-
----
-
 # Phần 3: Luồng điều khiển (Control Flow)
 
 Để thay đổi luồng thực thi, CPU sử dụng các **Cờ trạng thái (Condition Codes)** được cập nhật sau mỗi phép toán.

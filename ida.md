@@ -78,7 +78,7 @@ mov     rax, 0FFFFFFFFFFFFFFFFh     ; rax = FFFFFFFFFFFFFFFF
 
 ---
 
-### TỔNG KẾT VỀ VIỆC RETYPE TRONG IDA
+### -> RETYPE TRONG IDA
 
 Dựa trên các khối mã trên, đây là những quy tắc bạn cần nhớ khi thực hiện Retype (`phím Y`) trong IDA:
 
@@ -96,4 +96,88 @@ Dựa trên các khối mã trên, đây là những quy tắc bạn cần nhớ
     *   Lệnh `movs` (Move with Sign Extend): Thường dùng cho kiểu dữ liệu có dấu (`signed`).
 
 ---
-*Tôi đã xong Phần 1. Nếu bạn đã nắm chắc cách nhìn thanh ghi để đoán kiểu dữ liệu, hãy ra lệnh để tôi sang **Phần 2: Chế độ địa chỉ (Addressing Modes)** - Phần này cực kỳ quan trọng để bạn nhận diện Mảng (Array) và biến cục bộ trong IDA.*
+
+# Phần 2: Chế độ địa chỉ & Toán tử con trỏ (Addressing Modes & Pointers)
+
+Trong x86-64, việc truy cập bộ nhớ luôn tuân theo một công thức tổng quát để tính toán "Địa chỉ hiệu dụng" (Effective Address). Công thức này là:
+$$Addr = Imm + R[r_b] + R[r_i] \cdot s$$
+
+Trong đó:
+*   **$Imm$ (Immediate)**: Một hằng số offset (thường dùng để xác định vị trí biến cục bộ hoặc trường trong struct).
+*   **$r_b$ (Base register)**: Thanh ghi cơ sở.
+*   **$r_i$ (Index register)**: Thanh ghi chỉ số (thường là biến chạy của vòng lặp).
+*   **$s$ (Scale factor)**: Hệ số nhân, bắt buộc phải là **1, 2, 4, hoặc 8** (tương ứng với kích thước các kiểu dữ liệu cơ bản).
+
+### 1. Ví dụ về tính toán địa chỉ và con trỏ
+
+Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 4 byte). Địa chỉ bắt đầu của mảng nằm trong `%rdx` và chỉ số `i` nằm trong `%rcx`.
+
+**Bảng đối chiếu các biểu thức C và mã máy tương ứng:**
+
+| Biểu thức C | Kiểu dữ liệu | Giá trị địa chỉ / dữ liệu |
+| :--- | :--- | :--- |
+| `E` | `int *` | $x_E$ (Địa chỉ bắt đầu) |
+| `E[0]` | `int` | $M[x_E]$ (Giá trị phần tử đầu) |
+| `E[i]` | `int` | $M[x_E + 4i]$ |
+| `&E[2]` | `int *` | $x_E + 8$ |
+| `E + i - 1` | `int *` | $x_E + 4i - 4$ |
+
+**Mã Assembly tương ứng (Dữ liệu trả về lưu vào thanh ghi A):**
+
+**Cú pháp AT&T (Trong sách):**
+```asm
+; E in %rdx, i in %rcx
+movq    %rdx, %rax               ; Biểu thức E (Lấy địa chỉ)
+movl    (%rdx), %eax             ; Biểu thức E[0] (Lấy giá trị tại xE)
+movl    (%rdx, %rcx, 4), %eax    ; Biểu thức E[i] (Lấy giá trị tại xE + 4*i)
+leaq    8(%rdx), %rax            ; Biểu thức &E[2] (Tính địa chỉ xE + 8)
+leaq    -4(%rdx, %rcx, 4), %rax  ; Biểu thức E+i-1 (Tính địa chỉ xE + 4*i - 4)
+```
+
+**Cú pháp Intel (Trong IDA):**
+```asm
+; E in rdx, i in rcx
+mov     rax, rdx                 ; Biểu thức E
+mov     eax, dword ptr [rdx]     ; Biểu thức E[0]
+mov     eax, dword ptr [rdx + rcx * 4] ; Biểu thức E[i]
+lea     rax, [rdx + 8]           ; Biểu thức &E[2]
+lea     rax, [rdx + rcx * 4 - 4] ; Biểu thức E+i-1
+```
+
+### 2. Lệnh LEA (Load Effective Address) - "Vũ khí" tính toán
+
+Lệnh `lea` (Intel) hay `leaq` (AT&T) nhìn bề ngoài giống lệnh di chuyển dữ liệu (`mov`), nhưng nó **không truy cập bộ nhớ**. Nó chỉ dùng bộ máy tính toán địa chỉ của CPU để thực hiện các phép tính số học nhanh.
+
+**Ví dụ:** Nếu `%rdx` đang chứa giá trị `x`.
+
+**Cú pháp AT&T:**
+```asm
+leaq    7(%rdx, %rdx, 4), %rax   ; Tính rax = x + 4*x + 7 = 5x + 7
+```
+
+**Cú pháp Intel (Trong IDA):**
+```asm
+lea     rax, [rdx + rdx * 4 + 7] ; Tính rax = 5x + 7
+```
+
+---
+
+### TỔNG KẾT VỀ VIỆC RETYPE TRONG IDA
+
+Khi bạn thấy các lệnh truy cập bộ nhớ dạng phức tạp trong IDA, hãy sử dụng các manh mối sau để Retype:
+
+1.  **Nhận diện kích thước phần tử mảng (Scale factor)**:
+    *   Nếu thấy `[base + index * 1]`: Thường là mảng **`char`** (1 byte).
+    *   Nếu thấy `[base + index * 2]`: Thường là mảng **`short`** (2 byte).
+    *   Nếu thấy `[base + index * 4]`: Thường là mảng **`int`** hoặc **`float`** (4 byte).
+    *   Nếu thấy `[base + index * 8]`: Thường là mảng **`long`**, **`double`**, hoặc **mảng các con trỏ** (8 byte).
+
+2.  **Phân biệt `lea` và `mov` trong Intel Syntax**:
+    *   `mov eax, dword ptr [rdx + rcx * 4]`: Đây là thao tác lấy **giá trị** từ mảng. Trong C sẽ là `E[i]`.
+    *   `lea rax, [rdx + rcx * 4]`: Đây là thao tác lấy **địa chỉ** của phần tử. Trong C sẽ là `&E[i]` hoặc dùng trong toán tử con trỏ `E + i`.
+    *   Nếu bạn thấy IDA Decompiler dịch ra các phép tính lạ như `v5 = 5 * v2 + 7`, hãy kiểm tra lại cửa sổ Assembly xem có phải là lệnh `lea rax, [rdx + rdx * 4 + 7]` không. Nếu có, đó có thể chỉ là một phép tính số học bình thường, không phải địa chỉ bộ nhớ.
+
+3.  **Xác định kiểu dữ liệu qua hằng số Offset (Imm)**:
+    *   Khi thấy `mov eax, [rdi + 12]`: Nếu `rdi` là một con trỏ tới Struct, thì `12` chính là offset của một trường (field) bên trong Struct đó. Bạn có thể dựa vào kích thước 4 byte (`eax`) để Retype trường tại offset 12 là `int`.
+
+---

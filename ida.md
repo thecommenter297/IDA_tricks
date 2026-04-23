@@ -8,10 +8,10 @@
 
 Trong x86-64, kích thước của kiểu dữ liệu được xác định thông qua hậu tố của lệnh (AT&T) hoặc các từ khóa chỉ định kích thước bộ nhớ (Intel).
 
-*   **Byte**: 1 byte (C: `char`)
-*   **Word**: 2 bytes (C: `short`)
-*   **Double Word**: 4 bytes (C: `int`, `float`)
-*   **Quad Word**: 8 bytes (C: `long`, `double`, `char*`)
+*   **Byte**: 1 byte (`char`)
+*   **Word**: 2 bytes (`short`)
+*   **Double Word**: 4 bytes (`int`, `float`)
+*   **Quad Word**: 8 bytes (`long`, `double`, `char*`)
 
 ### 2. Cấu trúc các thanh ghi số nguyên
 

@@ -377,3 +377,5 @@ Khi phân tích luồng điều khiển trong IDA để phục vụ Retype:
     *   Trong ví dụ `case 102`, nếu không có lệnh `jmp` cuối block để thoát ra ngoài, nó sẽ thực thi thẳng vào block tiếp theo. IDA Decompiler thường xử lý tốt cái này, nhưng khi đọc mã ASM, sự thiếu vắng của lệnh nhảy thoát là dấu hiệu của "Fall-through".
 
 ---
+
+

@@ -155,9 +155,13 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 *Tính toán địa chỉ mà không truy cập bộ nhớ.*
 
 *   **AT&T:**
+
 ```leaq 8(%rdx), %rax```
+
 *   **Intel:**
+
 ```lea rax, [rdx + 8]```
+
 *   **Kết quả:** `%rax` chứa địa chỉ $x_E + 8$.
 
 **5. Toán tử con trỏ phức tạp (Biểu thức C: `E + i - 1`)**
@@ -165,8 +169,10 @@ Giả sử ta có một mảng số nguyên `E` kiểu `int` (mỗi phần tử 
 
 *   **AT&T:**
 ```leaq -4(%rdx, %rcx, 4), %rax```
+
 *   **Intel:**
 ```lea rax, [rdx + rcx * 4 - 4]```
+
 *   **Kết quả:** `%rax` chứa địa chỉ $x_E + 4i - 4$.
 
 

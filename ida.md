@@ -141,9 +141,13 @@ mov rax, rdx
 *Đọc giá trị từ bộ nhớ.*
 
 *   **AT&T:**
-```movl (%rdx), %eax```
+```asm
+movl (%rdx), %eax
+```
 *   **Intel:**
-```mov eax, dword ptr [rdx]```
+```asm
+mov eax, dword ptr [rdx]
+```
 *   **Kết quả:** `%eax` chứa giá trị tại $M[x_E]$.
 
 **3. Truy cập phần tử thứ i (Biểu thức C: `E[i]`)**
@@ -227,5 +231,155 @@ Khi bạn thấy các lệnh truy cập bộ nhớ dạng phức tạp trong IDA
 
 3.  **Xác định kiểu dữ liệu qua hằng số Offset (Imm)**:
     *   Khi thấy `mov eax, [rdi + 12]`: Nếu `rdi` là một con trỏ tới Struct, thì `12` chính là offset của một trường (field) bên trong Struct đó. Bạn có thể dựa vào kích thước 4 byte (`eax`) để Retype trường tại offset 12 là `int`.
+
+---
+
+Tiếp tục với mục tiêu hỗ trợ bạn sử dụng IDA Pro, chúng ta sẽ bước sang một phần cực kỳ quan trọng: **Luồng điều khiển**.
+
+Trong IDA, việc hiểu luồng điều khiển không chỉ giúp bạn nắm được logic của chương trình mà còn là "manh mối" duy nhất để bạn xác định xem một biến là **có dấu (signed)** hay **không dấu (unsigned)** — điều mà IDA Decompiler thường xuyên nhận diện sai.
+
+---
+
+# Phần 3: Luồng điều khiển (Control Flow)
+
+Để thay đổi luồng thực thi, CPU sử dụng các **Cờ trạng thái (Condition Codes)** được cập nhật sau mỗi phép toán.
+
+*   **ZF (Zero Flag):** Kết quả phép toán bằng 0.
+*   **SF (Sign Flag):** Kết quả phép toán âm (bit cao nhất là 1).
+*   **CF (Carry Flag):** Có nhớ ra ngoài bit cao nhất (dành cho số không dấu).
+*   **OF (Overflow Flag):** Xảy ra tràn số bù 2 (dành cho số có dấu).
+
+### 1. Phép so sánh và Nhận diện kiểu dữ liệu (Signed vs Unsigned)
+
+Đây là phần quan trọng nhất để **Retype** trong IDA. Trình biên dịch sẽ chọn lệnh nhảy dựa trên kiểu dữ liệu của biến.
+
+**Ví dụ: So sánh hai biến `a` và `b`**
+
+| Cú pháp Intel (IDA) | Ý nghĩa logic | Kiểu dữ liệu tương ứng |
+| :--- | :--- | :--- |
+| `cmp rax, rdx` | So sánh $a$ và $b$ | (Bước đệm) |
+| **`jg`** (Jump Greater) | Nhảy nếu $a > b$ | **Signed** (`int`, `long`) |
+| **`ja`** (Jump Above) | Nhảy nếu $a > b$ | **Unsigned** (`unsigned int`, `char *`) |
+| **`jl`** (Jump Less) | Nhảy nếu $a < b$ | **Signed** |
+| **`jb`** (Jump Below) | Nhảy nếu $a < b$ | **Unsigned** |
+
+**Kinh nghiệm IDA:** Nếu bạn thấy Decompiler hiện `if ( a > b )` nhưng mã Assembly bên dưới dùng lệnh **`ja`**, hãy Retype `a` và `b` sang `unsigned`.
+
+---
+
+### 2. Cấu trúc If-Else (Mẫu cơ bản)
+
+Dưới đây là cách trình biên dịch chuyển đổi một khối `if-else` (Ví dụ từ Mục 3.6.5).
+
+**Mã nguồn C:**
+```c
+long absdiff(long x, long y) {
+    long result;
+    if (x < y)
+        result = y - x;
+    else
+        result = x - y;
+    return result;
+}
+```
+
+**Mã Assembly (Cú pháp Intel trong IDA):**
+```asm
+; x in rdi, y in rsi
+absdiff:
+    cmp     rdi, rsi        ; So sánh x : y
+    jge     short loc_else  ; Nếu x >= y, nhảy tới phần Else
+    mov     rax, rsi        ; --- Bắt đầu phần Then ---
+    sub     rax, rdi        ; result = y - x
+    retn
+loc_else:                   ; --- Bắt đầu phần Else ---
+    mov     rax, rdi
+    sub     rax, rsi        ; result = x - y
+    retn
+```
+
+---
+
+### 3. Cấu trúc Vòng lặp (Loops)
+
+Trình biên dịch thường chuyển đổi các vòng lặp `while` hoặc `for` về dạng `do-while` để tối ưu số lần nhảy.
+
+**Mã nguồn C (Vòng lặp `while`):**
+```c
+long fact_while(long n) {
+    long result = 1;
+    while (n > 1) {
+        result *= n;
+        n = n - 1;
+    }
+    return result;
+}
+```
+
+**Mã Assembly (Cú pháp Intel trong IDA - Dạng Jump-to-Middle):**
+```asm
+; n in rdi
+fact_while:
+    mov     eax, 1          ; result = 1
+    jmp     short loc_test  ; Nhảy xuống kiểm tra điều kiện trước
+loc_loop:                   ; --- Thân vòng lặp ---
+    imul    rax, rdi        ; result *= n
+    sub     rdi, 1          ; n = n - 1
+loc_test:                   ; --- Kiểm tra điều kiện ---
+    cmp     rdi, 1          ; So sánh n : 1
+    jg      short loc_loop  ; Nếu n > 1, quay lại vòng lặp
+    retn
+```
+
+---
+
+### 4. Switch Case và Jump Table (Cực kỳ quan trọng cho IDA)
+
+Khi một lệnh `switch` có nhiều trường hợp (thường > 4) và các giá trị gần nhau, trình biên dịch tạo ra một **Jump Table** (Bảng nhảy). Đây là nơi bạn cần tạo Struct hoặc Array địa chỉ trong IDA.
+
+**Mã nguồn C:**
+```c
+switch (n) {
+    case 100: val *= 13; break;
+    case 102: val += 10; /* Fall through */
+    case 103: val += 11; break;
+    default:  val = 0;
+}
+```
+
+**Mã Assembly (Cú pháp Intel trong IDA):**
+```asm
+; n in rsi (sau khi đã trừ đi 100 để đưa về dải 0-6)
+    cmp     rsi, 6          ; Kiểm tra xem n có nằm trong dải 0-6 không
+    ja      loc_default     ; Nếu n > 6, nhảy tới trường hợp default
+    jmp     ds:jpt_4006F8[rsi*8] ; Nhảy gián tiếp dựa vào bảng địa chỉ (Jump Table)
+
+; --- Jump Table (Bảng nhảy nằm trong phân đoạn .rodata) ---
+jpt_4006F8:
+    dq offset loc_case100   ; n = 100 (index 0)
+    dq offset loc_default   ; n = 101 (index 1 - missing)
+    dq offset loc_case102   ; n = 102 (index 2)
+    ...
+```
+
+---
+
+### -> RETYPE & LOGIC
+
+Khi phân tích luồng điều khiển trong IDA để phục vụ Retype:
+
+1.  **Xác định Signed/Unsigned**: 
+    *   Để ý kỹ lệnh nhảy: 
+        *   `jg`, `jl`, `jge`, `jle` -> Biến chắc chắn là **có dấu (signed)**.
+        *   `ja`, `jb`, `jae`, `jbe` -> Biến chắc chắn là **không dấu (unsigned)**.
+    *   Hãy sửa lại kiểu dữ liệu ngay (`Y`) khi thấy Decompiler hiển thị so sánh sai bản chất.
+
+2.  **Khôi phục Switch Case**:
+    *   Nếu Decompiler không nhận diện được `switch`, bạn sẽ thấy lệnh `jmp ds:addr[rsi*8]`.
+    *   **Retype**: Click vào `ds:addr`, xác định đây là một mảng các địa chỉ (kiểu `void *` hoặc `code *`).
+    *   Việc tính toán `index = n - 100` giúp bạn xác định giá trị khởi đầu của `switch`.
+
+3.  **Nhận diện "Fall-through"**:
+    *   Trong ví dụ `case 102`, nếu không có lệnh `jmp` cuối block để thoát ra ngoài, nó sẽ thực thi thẳng vào block tiếp theo. IDA Decompiler thường xử lý tốt cái này, nhưng khi đọc mã ASM, sự thiếu vắng của lệnh nhảy thoát là dấu hiệu của "Fall-through".
 
 ---

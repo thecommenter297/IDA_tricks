@@ -1144,7 +1144,666 @@ Lệnh **`leaq`** (Load Effective Address) thực chất là một biến thể 
 *   Trong cú pháp Intel, lệnh này là **`lea`**.
 *   Khi bạn thấy `lea rax, [rdi+rsi*4]`, bộ xử lý không hề truy cập vào RAM tại địa chỉ đó. Nó chỉ thực hiện phép toán `rax = rdi + (rsi * 4)` và lưu kết quả vào `rax`. Trình biên dịch thường dùng lệnh này như một "mẹo" để thực hiện các phép toán cộng và nhân nhanh chóng mà không cần dùng các lệnh số học nặng nề.
 
-*(Nội dung bức ảnh dừng lại ở phần giới thiệu về bản chất của lệnh leaq)*.
+---
+
+### Practice Problem 3.6: Tính toán giá trị với lệnh `leaq`
+
+Giả sử thanh ghi `%rbx` lưu giá trị $p$ và thanh ghi `%rdx` lưu giá trị $q$.
+
+<img width="720" height="790" alt="image" src="https://github.com/user-attachments/assets/f6778857-8a50-41b1-ad82-584699103788" />
+
+
+<details>
+<summary><b>Nhấn để xem bảng giải mã công thức toán học</b></summary>
+
+| Lệnh Assembly (ATT) | Lệnh Intel (IDA Pro) | Công thức tính toán (Kết quả lưu vào `%rax`) |
+| :--- | :--- | :--- |
+| `leaq 9(%rdx), %rax` | `lea rax, [rdx + 9]` | $q + 9$ |
+| `leaq (%rdx,%rbx), %rax` | `lea rax, [rdx + rbx]` | $q + p$ |
+| `leaq (%rdx,%rbx,3), %rax` | `lea rax, [rdx + rbx*2 + rbx]` | $q + 3p$ (Lưu ý: tỉ lệ 3 không hợp lệ, thực tế là $q + p \cdot 3$) |
+| `leaq 2(%rbx,%rbx,7), %rax` | `lea rax, [rbx + rbx*7 + 2]` | $p + 7p + 2 = \mathbf{8p + 2}$ |
+| `leaq 0xE(,%rdx,3), %rax` | `lea rax, [rdx*2 + rdx + 14]` | $3q + 14$ (Với $0xE = 14$ thập phân) |
+| `leaq 6(%rbx,%rdx,7), %rax` | `lea rax, [rbx + rdx*7 + 6]` | $p + 7q + 6$ |
+
+*Ghi chú kỹ thuật:* Trong x86-64 thực tế, hệ số tỉ lệ ($s$) chỉ có thể là 1, 2, 4, hoặc 8. Để nhân với 3, 7 hoặc các số khác, trình biên dịch kết hợp `Base + Index * Scale`. Ví dụ: `x * 3` được tính là `x + x * 2`.
+
+</details>
+
+---
+
+### Ví dụ minh họa: Sử dụng `leaq` trong mã thực tế
+
+Xét hàm C thực hiện tính toán biểu thức: $x + 4y + 12z$.
+
+```c
+long scale(long x, long y, long z) {
+    long t = x + 4 * y + 12 * z;
+    return t;
+}
+```
+
+Khi biên dịch, thay vì dùng các lệnh nhân (`imul`) đắt đỏ, trình biên dịch GCC sử dụng chuỗi 3 lệnh `leaq` vô cùng khôn ngoan để đạt được kết quả:
+
+| Dòng | Lệnh ATT (Sách) | Lệnh Intel (IDA Pro) | Phép tính logic | Trạng thái dữ liệu |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | `leaq (%rdi,%rsi,4), %rax` | `lea rax, [rdi + rsi*4]` | $x + 4y$ | `%rax` = $x + 4y$ |
+| 2 | `leaq (%rdx,%rdx,2), %rdx` | `lea rdx, [rdx + rdx*2]` | $z + 2z$ | `%rdx` = $3z$ |
+| 3 | `leaq (%rax,%rdx,4), %rax` | `lea rax, [rax + rdx*4]` | $(x + 4y) + 4(3z)$ | `%rax` = $x + 4y + 12z$ |
+| 4 | `ret` | `retn` | Trả về kết quả | Kết quả nằm trong `%rax` |
+
+**Phân tích của trình biên dịch:**
+*   **Dòng 1:** Tính $x + 4y$ và lưu tạm vào `%rax`.
+*   **Dòng 2:** Nhân $z$ với 3 bằng cách lấy $z + 2z$, cập nhật lại vào `%rdx`.
+*   **Dòng 3:** Lấy giá trị ở `%rax` cộng với $4 \times (\text{giá trị mới ở } \%rdx)$. Tức là: $(x + 4y) + 4 \times (3z) = x + 4y + 12z$.
+
+---
+
+### IDA Pro Insights (Góc nhìn tối ưu hóa)
+
+*   **Lệnh LEA không phải là lệnh bộ nhớ:** Khi bạn soi IDA và thấy `lea`, hãy nhớ bộ xử lý đang dùng đơn vị tính toán địa chỉ (Address Generation Unit - AGU) để làm toán nhanh thay vì dùng đơn vị số học (ALU).
+*   **Nhận diện biểu thức:** Trong IDA, nếu bạn thấy một chuỗi các lệnh `lea` liên tiếp tác động lên các thanh ghi tham số (`rdi`, `rsi`, `rdx`), đó là dấu hiệu của một biểu thức toán học đa biến.
+*   **Tốc độ:** Khả năng thực hiện phép cộng và một dạng nhân giới hạn (nhân với 2, 4, 8) trong một chu trình đơn giúp `lea` cực kỳ hiệu quả trong các biểu thức số học đơn giản như ví dụ trên.
+
+---
+
+### Practice Problem 3.7: Dịch ngược biểu thức toán học phức tạp
+
+<img width="960" height="607" alt="image" src="https://github.com/user-attachments/assets/91b43a68-cdfe-4c7b-87ae-89dc03f2de02" />
+
+
+**Đề bài:**
+Xét đoạn mã C dưới đây, trong đó biểu thức tính toán đã bị lược bỏ:
+
+```c
+short scale3(short x, short y, short z) {
+    short t = ________________;
+    return t;
+}
+```
+
+Khi biên dịch hàm này bằng GCC, ta thu được mã Assembly sau:
+
+**Ánh xạ thanh ghi:**
+*   `x` nằm trong `%rdi`
+*   `y` nằm trong `%rsi`
+*   `z` nằm trong `%rdx`
+
+**Mã Assembly:**
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Phép tính logic (Từng bước) |
+| :--- | :--- | :--- | :--- |
+| 1 | `leaq (%rsi,%rsi,2), %rdx` | `lea rdx, [rsi + rsi*2]` | `%rdx = y + 2*y = 3*y` |
+| 2 | `leaq (%rdx,%rdi,4), %rax` | `lea rax, [rdx + rdi*4]` | `%rax = (3*y) + (4*x)` |
+| 3 | `leaq (%rax,%rdx,2), %rax` | `lea rax, [rax + rdx*2]` | `%rax = (3*y + 4*x) + 2*(3*y)` |
+| 4 | `ret` | `retn` | Trả về kết quả | Kết quả nằm trong `%rax` |
+
+---
+
+<details>
+   <summary>Phân tích và Giải mã biểu thức C</summary>
+
+Để tìm biểu thức của `t`, ta đi theo luồng biến đổi của các thanh ghi:
+
+1.  **Bước 1 (Lệnh 1):** Trình biên dịch tính `3 * y` và lưu vào thanh ghi `%rdx`. Lưu ý rằng giá trị gốc của tham số `z` ban đầu nằm ở `%rdx` đã bị ghi đè hoàn toàn. Điều này có nghĩa là tham số `z` **không được sử dụng** trong biểu thức này.
+2.  **Bước 2 (Lệnh 2):** Lấy kết quả vừa tính (`3 * y`) cộng với `4 * x`. Kết quả tạm thời là `4 * x + 3 * y`, lưu vào `%rax`.
+3.  **Bước 3 (Lệnh 3):** Lấy giá trị ở `%rax` cộng với `2 * %rdx`. Vì `%rdx` đang giữ giá trị `3 * y`, phép toán sẽ là:
+    $t = (4 * x + 3 * y) + 2 * (3 * y)$
+    $t = 4 * x + 3 * y + 6 * y$
+    $t = 4 * x + 9 * y$
+
+### Lời giải mã C hoàn chỉnh:
+
+Dựa trên phân tích trên, biểu thức còn thiếu trong mã C là:
+
+```c
+short scale3(short x, short y, short z) {
+    short t = 4 * x + 9 * y;
+    return t;
+}
+```
+
+</details>
+
+---
+
+### IDA Pro Insights (Lưu ý về tối ưu hóa)
+
+*   **Tham số bị bỏ rơi:** Khi dịch ngược trong IDA, nếu bạn thấy một thanh ghi tham số (như `%rdx` cho tham số thứ 3) bị ghi đè ngay dòng đầu tiên mà chưa được sử dụng, bạn có thể kết luận hàm đó không dùng đến tham số đó (unused parameter).
+*   **Sử dụng lại kết quả trung gian:** Thay vì tính `9 * y` một cách trực tiếp (không thể làm được chỉ với 1 lệnh `lea` vì hệ số tỉ lệ tối đa là 8), trình biên dịch đã chọn cách tính `3 * y` trước, sau đó lấy `(3 * y) + 2 * (3 * y)` để ra `9 * y`. Đây là một kỹ thuật tối ưu hóa phổ biến để tiết kiệm số lượng lệnh thực thi.
+*   **Kích thước dữ liệu:** Mặc dù kiểu dữ liệu là `short` (16-bit), trình biên dịch vẫn sử dụng `leaq` (64-bit) để tính toán nhằm tận dụng tối đa tốc độ của bộ nạp địa chỉ, sau đó kết quả trả về sẽ tự động được hiểu là 16-bit thấp của `%rax`.
+
+---
+
+### 3.5.2 Unary and Binary Operations (Phép toán đơn phân và nhị phân)
+
+#### 1. Unary Operations (Phép toán một toán hạng)
+Các phép toán trong nhóm này chỉ có một toán hạng duy nhất, đóng vai trò là **cả nguồn và đích**.
+*   **Toán hạng:** Có thể là một thanh ghi hoặc một vị trí bộ nhớ.
+*   **Ví dụ:** Lệnh `incq (%rsp)` (ATT) sẽ làm tăng giá trị của phần tử 8-byte nằm ở đỉnh ngăn xếp thêm 1 đơn vị. 
+*   **Tương ứng trong C:** Cú pháp này gợi nhớ đến các toán tử tăng (`++`) và giảm (`--`) trong ngôn ngữ C.
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Tương ứng trong C |
+| :--- | :--- | :--- |
+| `inc D` | `inc D` | `D++` |
+| `dec D` | `dec D` | `D--` |
+
+#### 2. Binary Operations (Phép toán hai toán hạng)
+Trong nhóm này, toán hạng thứ hai đóng vai trò là **cả nguồn và đích**.
+*   **Tương ứng trong C:** Cú pháp này giống với các toán tử gán phức hợp như `x -= y`.
+*   **Thứ tự toán hạng (Cực kỳ quan trọng):** 
+    *   Trong **ATT (Sách)**: Toán hạng nguồn đứng trước, đích đứng sau. `subq %rax, %rdx` có nghĩa là lấy `%rdx` trừ đi `%rax` rồi lưu lại vào `%rdx`. (Hãy đọc là: "Trừ `%rax` khỏi `%rdx`").
+    *   Trong **Intel (IDA Pro)**: Thứ tự đảo ngược. `sub rdx, rax` có nghĩa là `%rdx = %rdx - %rax`.
+
+| Loại toán hạng | ATT Syntax (Sách) | Intel Syntax (IDA) | Logic tính toán |
+| :--- | :--- | :--- | :--- |
+| **Nguồn (Source)** | Đứng trước | Đứng sau | Có thể là hằng số, thanh ghi, hoặc bộ nhớ. |
+| **Đích (Destination)** | Đứng sau | Đứng trước | Có thể là thanh ghi hoặc bộ nhớ. |
+
+**Hạn chế và Cơ chế vận hành:**
+1.  **Hạn chế Memory-to-Memory:** Tương tự lệnh `MOV`, cả hai toán hạng không thể cùng là vị trí bộ nhớ.
+2.  **Chu kỳ Bộ nhớ:** Khi toán hạng thứ hai là một vị trí bộ nhớ, bộ xử lý phải thực hiện chuỗi thao tác: **Đọc** giá trị từ bộ nhớ -> **Thực hiện** phép toán -> **Ghi** kết quả ngược lại bộ nhớ.
+
+---
+
+### IDA Pro Insights (Lưu ý về phép Trừ và Chia)
+
+*   **Tính không giao hoán (Non-commutative):** Với phép cộng (`add`) hay phép nhân (`imul`), thứ tự toán hạng không làm thay đổi kết quả. Nhưng với phép trừ (`sub`), việc nhầm lẫn giữa ATT và Intel sẽ khiến bạn hiểu sai hoàn toàn logic (đổi ngược số bị trừ và số trừ).
+    *   *Sách (ATT):* `sub S, D` $\rightarrow D = D - S$
+    *   *IDA (Intel):* `sub D, S` $\rightarrow D = D - S$
+*   **Cập nhật biến toàn cục/cục bộ:** Trong IDA, nếu bạn thấy lệnh `add [rbp+var_8], rax`, đây chính là hiện thân của biểu thức `v1 += x;` trong C, trong đó `v1` là một biến cục bộ nằm trên Stack.
+
+---
+
+### Practice Problem 3.8: Tác động của các phép toán Số học
+
+**Trạng thái ban đầu hệ thống:**
+
+| Bộ nhớ (Address) | Giá trị (Value) | Thanh ghi (Register) | Giá trị (Value) |
+| :--- | :--- | :--- | :--- |
+| `0x100` | `0xFF` | `%rax` | `0x100` |
+| `0x108` | `0xAB` | `%rcx` | `0x1` |
+| `0x110` | `0x13` | `%rdx` | `0x3` |
+| `0x118` | `0x11` | | |
+
+---
+
+<details>
+<summary><b>Nhấn để xem giải đề và phân tích chi tiết từng lệnh</b></summary>
+
+Điền vào bảng dưới đây vị trí đích (thanh ghi hoặc địa chỉ bộ nhớ) bị cập nhật và giá trị mới sau khi thực hiện lệnh:
+
+| Lệnh (ATT Syntax) | Lệnh (Intel Syntax/IDA) | Logic tính toán | Vị trí đích (Destination) | Giá trị mới (Value) |
+| :--- | :--- | :--- | :--- | :--- |
+| `addq %rcx, (%rax)` | `add qword ptr [rax], rcx` | Lấy giá trị tại `0x100` (`0xFF`) cộng `%rcx` (`0x1`) | **Address `0x100`** | **`0x100`** |
+| `subq %rdx, 8(%rax)` | `sub qword ptr [rax+8], rdx` | Lấy giá trị tại `0x108` (`0xAB`) trừ `%rdx` (`0x3`) | **Address `0x108`** | **`0xA8`** |
+| `imulq $16, (%rax,%rdx,8)`| `imul qword ptr [rax+rdx*8], 10h`| Lấy giá trị tại `0x118` (`0x11`) nhân với 16 (`0x10`) | **Address `0x118`** | **`0x110`** |
+| `incq 16(%rax)` | `inc qword ptr [rax+10h]` | Tăng giá trị tại `0x110` (`0x13`) thêm 1 | **Address `0x110`** | **`0x14`** |
+| `decq %rcx` | `dec rcx` | Giảm thanh ghi `%rcx` (`0x1`) đi 1 | **Thanh ghi `%rcx`** | **`0x0`** |
+| `subq %rdx, %rax` | `sub rax, rdx` | Lấy thanh ghi `%rax` (`0x100`) trừ `%rdx` (`0x3`) | **Thanh ghi `%rax`** | **`0xFD`** |
+
+</details>
+
+---
+
+### Phân tích kỹ thuật (Insights cho IDA Pro)
+
+1.  **Thứ tự toán hạng (Reminder):**
+    *   Hãy nhìn lệnh `subq %rdx, %rax`. Trong sách (ATT), nó là `%rax = %rax - %rdx`. 
+    *   Trong IDA Pro (Intel), bạn sẽ thấy `sub rax, rdx`. May mắn là dù viết ngược lại, logic vẫn là **Đích = Đích - Nguồn**. Tuy nhiên, phải cực kỳ cẩn thận với lệnh `sub` và `cmp`.
+
+2.  **Kích thước dữ liệu:**
+    *   Tất cả các lệnh trong bài tập này đều có hậu tố `q` (quadword), tương đương với `qword ptr` trong IDA. Nghĩa là chúng ta đang thao tác trên 8 byte dữ liệu.
+    *   Khi tính toán địa chỉ như `8(%rax)`, bạn lấy `0x100 + 8 = 0x108`. Trong IDA, nếu đây là một mảng kiểu `long`, bạn có thể thấy nó hiển thị dưới dạng `[rax + 8]`.
+
+3.  **Phép nhân `imulq $16, ...`**:
+    *   Giá trị `0x11` (thập phân là 17). 
+    *   $17 \times 16 = 272$.
+    *   Đổi $272$ sang Hex: $272 = 256 + 16 = 1 \times 16^2 + 1 \times 16^1 + 0 \times 16^0 = 0x110$.
+    *   Đây là cách trình biên dịch xử lý các phép toán số nguyên cơ bản trên các phần tử mảng.
+
+---
+
+### 3.5.3 Shift Operations (Các phép dịch bit)
+
+Nhóm cuối cùng trong các phép toán số học là các phép dịch bit. Trong cú pháp ATT (sách), **lượng dịch (shift amount)** được ghi trước, và **giá trị cần dịch** được ghi sau.
+
+#### 1. Lượng dịch (Shift Amount)
+Lượng dịch có thể được chỉ định bằng hai cách:
+1.  **Giá trị tức thời (Immediate):** Một hằng số.
+2.  **Thanh ghi đơn byte `%cl`:** Đây là một điểm cực kỳ đặc biệt, x86-64 chỉ cho phép sử dụng duy nhất thanh ghi `%cl` (8-bit thấp của `%rcx`) làm toán hạng lượng dịch.
+
+**Cơ chế Masking (Mặt nạ bit):**
+Khi dịch một giá trị có độ dài $w$ bits, lượng dịch thực tế được tính từ $m$ bits thấp nhất của thanh ghi `%cl`, trong đó $2^m = w$. Các bit cao hơn bị bỏ qua.
+*   **Ví dụ:** Nếu `%cl` có giá trị `0xFF` (255 thập phân):
+    *   Lệnh `salb` (8-bit): Dịch 7 vị trí (lấy 3 bit thấp: $2^3=8$).
+    *   Lệnh `salw` (16-bit): Dịch 15 vị trí (lấy 4 bit thấp: $2^4=16$).
+    *   Lệnh `sall` (32-bit): Dịch 31 vị trí (lấy 5 bit thấp: $2^5=32$).
+    *   Lệnh **`salq`** (64-bit): Dịch **63** vị trí (lấy 6 bit thấp: $2^6=64$).
+
+#### 2. Các loại phép dịch
+
+**Dịch trái (Left Shift):**
+*   **Lệnh:** **`SAL`** (Shift Arithmetic Left) và **`SHL`** (Shift Logical Left).
+*   **Đặc điểm:** Cả hai có hiệu ứng **như nhau**. Các vị trí trống bên phải luôn được lấp đầy bằng số **0**.
+
+**Dịch phải (Right Shift):**
+*   **`SAR` (Shift Arithmetic Right):** Dịch phải **số học**. Lấp đầy các vị trí trống bên trái bằng bản sao của **bit dấu** (MSB). Giúp bảo toàn dấu của số nguyên. (Ký hiệu: $>>_A$).
+*   **`SHR` (Shift Logical Right):** Dịch phải **logic**. Lấp đầy các vị trí trống bên trái bằng số **0**. Dùng cho dữ liệu không dấu. (Ký hiệu: $>>_L$).
+
+---
+
+### Bảng đối chiếu lệnh (ATT vs Intel/IDA Pro)
+
+| Loại dịch | ATT (Sách) | Intel (IDA Pro) | Hiệu ứng (Logic) |
+| :--- | :--- | :--- | :--- |
+| **Dịch trái** | `salq $k, D` | `shl D, k` | $D = D \ll k$ |
+| **Dịch phải số học** | `sarq %cl, D` | `sar D, cl` | $D = D \gg_A cl$ |
+| **Dịch phải logic** | `shrq $k, D` | `shr D, k` | $D = D \gg_L k$ |
+
+---
+
+### IDA Pro Insights (Lưu ý khi dịch ngược)
+
+1.  **Thanh ghi `%cl`:** Nếu bạn thấy một lệnh dịch bit mà lượng dịch là một thanh ghi, IDA chắc chắn sẽ hiển thị đó là `cl`. Đừng ngạc nhiên nếu trước đó chương trình nạp một giá trị lớn vào `rcx`, vì bộ xử lý sẽ chỉ lấy vài bit thấp nhất của nó để thực hiện dịch.
+2.  **Phép nhân/chia tối ưu:** 
+    *   `shl rax, 3` thường là cách trình biên dịch thực hiện `rax * 8`.
+    *   `sar rax, 2` thường là cách thực hiện `rax / 4` (với `rax` là số có dấu).
+3.  **Tính có dấu trong C:** 
+    *   Trong C, toán tử `>>` trên kiểu `unsigned` sẽ được dịch thành `SHR`.
+    *   Toán tử `>>` trên kiểu `int` hoặc `long` (có dấu) thường được dịch thành `SAR`. Đây là điểm quan trọng để bạn xác định kiểu dữ liệu của biến khi đọc mã assembly.
+
+---
+
+### Practice Problem 3.9: Hoàn thiện mã Assembly cho phép dịch bit
+
+<img width="1049" height="820" alt="image" src="https://github.com/user-attachments/assets/eec38aa7-9f0f-47d0-8fef-994c5ea3ced4" />
+
+
+**Đề bài:**
+Giả sử chúng ta muốn tạo mã assembly cho hàm C sau:
+
+```c
+long shift_left4_rightn(long x, long n)
+{
+    x <<= 4;   // Dịch trái 4 bit
+    x >>= n;   // Dịch phải n bit (số học)
+    return x;
+}
+```
+
+Dưới đây là một phần của mã assembly thực hiện các phép dịch này và để lại giá trị cuối cùng trong thanh ghi `%rax`. Hai lệnh then chốt đã bị lược bỏ.
+
+**Quy ước:**
+*   Tham số `x` nằm trong `%rdi`.
+*   Tham số `n` nằm trong `%rsi`.
+
+**Mã Assembly (còn thiếu):**
+
+| Dòng | Mã Assembly (ATT) | Chú thích (Annotations) |
+| :--- | :--- | :--- |
+| 1 | `movq %rdi, %rax` | Lấy giá trị `x` đưa vào `%rax`. |
+| 2 | `________________` | **Thực hiện x <<= 4** |
+| 3 | `movl %esi, %ecx` | Lấy giá trị `n` (4 bytes thấp) đưa vào `%ecx`. |
+| 4 | `________________` | **Thực hiện x >>= n** (Dịch phải số học) |
+
+---
+
+<details>
+<summary><b>Nhấn để xem lời giải và phân tích các lệnh bị thiếu</b></summary>
+
+Để hoàn thiện bài toán này, ta cần chọn đúng lệnh dịch bit dựa trên kích thước dữ liệu (`long` - 8 bytes) và quy ước về thanh ghi lượng dịch.
+
+**1. Điền vào dòng 2 (x <<= 4):**
+*   **ATT Syntax:** `salq $4, %rax` (hoặc `shlq $4, %rax`).
+*   **Intel Syntax (IDA):** `shl rax, 4`.
+*   *Giải thích:* Ta dịch trái thanh ghi chứa giá trị `x` (`%rax`) với hằng số là 4. Hậu tố `q` chỉ định đây là phép toán trên 8 byte.
+
+**2. Điền vào dòng 4 (x >>= n):**
+*   **ATT Syntax:** `sarq %cl, %rax`.
+*   **Intel Syntax (IDA):** `sar rax, cl`.
+*   *Giải thích:* Đề bài yêu cầu dịch phải **số học** (arithmetically), do đó phải dùng lệnh **SAR**. Lượng dịch `n` đã được nạp vào `%ecx` ở dòng 3. Theo quy định của x86-64, lượng dịch khi dùng thanh ghi bắt buộc phải là `%cl`.
+
+**Mã hoàn chỉnh (ATT):**
+```assembly
+shift_left4_rightn:
+    movq    %rdi, %rax      ; Copy x sang rax
+    salq    $4, %rax        ; x <<= 4
+    movl    %esi, %ecx      ; Copy n sang ecx (lấy phần thấp là cl)
+    sarq    %cl, %rax       ; x >>= n (Arithmetic shift)
+    ret
+```
+
+</details>
+
+---
+
+### IDA Pro Insights (Phân tích thực tế)
+
+*   **Tại sao lại là `movl %esi, %ecx`?** 
+    *   Mặc dù `n` là kiểu `long` (8 byte), nhưng lượng dịch bit tối đa cho một thanh ghi 64-bit chỉ là 63. Do đó, trình biên dịch chỉ cần lấy 4 byte thấp (`%esi`) của `n` đưa vào `%ecx`. 
+    *   Thực tế, lệnh `sarq %cl, %rax` chỉ quan tâm đến 6 bit thấp nhất của thanh ghi `%rcx` (tức là nằm trong `%cl`).
+*   **Nhận diện kiểu dữ liệu:** Khi soi mã trong IDA, nếu bạn thấy lệnh `sar` (Arithmetic Right Shift), bạn có thể tự tin đoán rằng biến trong mã nguồn C là kiểu số nguyên **có dấu** (`int` hoặc `long`). Nếu là `shr` (Logical Right Shift), khả năng cao biến đó là **không dấu** (`unsigned`).
+
+---
+
+### Hình 3.11: Mã C và mã Assembly cho hàm số học `arith`
+
+#### (a) Mã nguồn C
+```c
+long arith(long x, long y, long z)
+{
+    long t1 = x ^ y;
+    long t2 = z * 48;
+    long t3 = t1 & 0x0F0F0F0F;
+    long t4 = t2 - t3;
+    return t4;
+}
+```
+
+#### (b) Mã Assembly (Đối chiếu ATT và Intel/IDA Pro)
+**Ánh xạ ban đầu:** `x` trong `%rdi`, `y` trong `%rsi`, `z` trong `%rdx`.
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Phép tính logic | Trạng thái biến |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | `xorq %rsi, %rdi` | `xor rdi, rsi` | `rdi = x ^ y` | `%rdi` giữ `t1` |
+| 2 | `leaq (%rdx,%rdx,2), %rax` | `lea rax, [rdx + rdx*2]` | `rax = 3 * z` | `%rax` giữ `3z` |
+| 3 | `salq $4, %rax` | `shl rax, 4` | `rax = rax << 4` | `%rax` giữ `t2` ($3z \times 16 = 48z$) |
+| 4 | `andl $252645135, %edi` | `and edi, 0F0F0F0Fh` | `edi = t1 & 0x0F0F0F0F` | `%rdi` giữ `t3` |
+| 5 | `subq %rdi, %rax` | `sub rax, rdi` | `rax = t2 - t3` | `%rax` giữ `t4` (Kết quả) |
+| 6 | `ret` | `retn` | Trả về kết quả | |
+
+*Ghi chú: Số $252645135$ trong hệ thập phân chính là `0x0F0F0F0F` trong hệ hexa.*
+
+---
+
+### 3.5.4 Discussion (Thảo luận)
+
+Hầu hết các lệnh số học được liệt kê ở Hình 3.10 có thể sử dụng cho cả số nguyên không dấu (unsigned) và số nguyên bù hai (signed). Chỉ có phép dịch phải (`SAR` vs `SHR`) là cần phân biệt rõ ràng giữa dữ liệu có dấu và không dấu. Đây là lý do tại sao số học bù hai là cách ưu tiên để triển khai số học số nguyên có dấu.
+
+#### Phân tích luồng tối ưu hóa trong ví dụ `arith`:
+
+1.  **Tối ưu phép nhân (Dòng 2 & 3):**
+    *   Biểu thức C yêu cầu `z * 48`.
+    *   Thay vì dùng lệnh `imul`, trình biên dịch kết hợp `leaq` để tính $3z$ (`z + 2z`), sau đó dùng `salq` để dịch trái 4 bit (tương đương nhân với $2^4 = 16$). 
+    *   Kết quả: $3z \times 16 = 48z$. Đây là cách tính toán nhanh hơn nhiều so với lệnh nhân thông thường.
+
+2.  **Tối ưu hóa thanh ghi:**
+    *   Trình biên dịch sử dụng chính các thanh ghi tham số để lưu trữ kết quả trung gian. Ví dụ: `%rdi` ban đầu chứa `x`, sau dòng 1 nó chứa `t1`, và sau dòng 4 nó chứa `t3`.
+    *   Việc tái sử dụng thanh ghi giúp giảm thiểu việc phải truy cập bộ nhớ (Stack) và tiết kiệm tài nguyên bộ xử lý.
+
+3.  **Sử dụng lệnh 32-bit cho dữ liệu 64-bit (Dòng 4):**
+    *   Lưu ý lệnh `andl` hoạt động trên `%edi` (32-bit). 
+    *   Vì hằng số `0x0F0F0F0F` chỉ có 32 bit, trình biên dịch sử dụng phiên bản lệnh `l` (long/32-bit). Quy ước của x86-64 sẽ tự động xóa các bit cao của `%rdi` về 0, điều này hoàn toàn phù hợp với logic của phép toán `&` với một hằng số nhỏ.
+
+---
+
+### IDA Pro Insights (Kỹ năng đọc Code tối ưu)
+
+*   **Nhận diện hằng số Hex:** Khi thấy một số thập phân lớn trong sách (như $252645135$), hãy luôn chuyển nó sang Hex trong IDA (nhấn phím `H`). Bạn sẽ thấy nó thường là các mẫu bit đẹp như `0F0F0F0Fh`.
+*   **Phân rã phép nhân:** Nếu bạn thấy một lệnh `lea` theo sau bởi một lệnh `shl` trên cùng một thanh ghi, hãy ngay lập tức nghĩ đến một phép nhân hằng số.
+    *   Công thức: `(x * Scale_của_LEA) << Lượng_dịch_SHL`.
+*   **Thứ tự trả về:** Hãy luôn theo dõi thanh ghi `%rax`. Mọi con đường tính toán cuối cùng đều phải đổ về `%rax` trước lệnh `ret`.
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 225, bao gồm hai bài tập thực hành quan trọng: một bài về dịch ngược biểu thức logic và một bài về "idiom" (thói quen mã máy) cực kỳ phổ biến trong IDA Pro.
+
+---
+
+### Practice Problem 3.10: Dịch ngược hàm `arith3`
+
+<img width="950" height="715" alt="image" src="https://github.com/user-attachments/assets/967afaa4-e119-401c-b1a9-90ac234c70ee" />
+
+
+**Đề bài:**
+Xét đoạn mã C dưới đây, trong đó các biểu thức đã bị lược bỏ:
+
+```c
+short arith3(short x, short y, short z) {
+    short p1 = ________;
+    short p2 = ________;
+    short p3 = ________;
+    short p4 = ________;
+    return p4;
+}
+```
+
+**Mã Assembly tương ứng (ATT Syntax):**
+*Quy ước: x trong %rdi, y trong %rsi, z trong %rdx*
+
+| Dòng | Lệnh Assembly (Sách) | Lệnh Intel (IDA Pro) | Phân tích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `orq %rsi, %rdx` | `or rdx, rsi` | `rdx = z | y` (Đây là `p1`) |
+| 2 | `sarq $9, %rdx` | `sar rdx, 9` | `rdx = p1 >> 9` (Đây là `p2`) |
+| 3 | `notq %rdx` | `not rdx` | `rdx = ~p2` (Đây là `p3`) |
+| 4 | `movq %rdx, %rax` | `mov rax, rdx` | Chuẩn bị trả về giá trị `p3` |
+| 5 | `subq %rsi, %rax` | `sub rax, rsi` | `rax = p3 - y` (Đây là `p4`) |
+| 6 | `ret` | `retn` | Trả về `p4` |
+
+<details>
+
+<summary>Lời giải mã C hoàn chỉnh:</summary>
+
+```c
+short arith3(short x, short y, short z) {
+    short p1 = z | y;
+    short p2 = p1 >> 9;
+    short p3 = ~p2;
+    short p4 = p3 - y;
+    return p4;
+}
+```
+
+</details>
+
+---
+
+### Practice Problem 3.11: Idiom "XOR tự thân"
+
+<img width="1072" height="478" alt="image" src="https://github.com/user-attachments/assets/d061eea9-99e5-478a-a4fe-2865393c7b37" />
+
+
+<details>
+   <summary>Nhấn để xem phân tích và lời giải</summary>
+Trong mã máy tạo ra từ C, rất phổ biến việc bắt gặp các dòng lệnh có dạng:
+`xorq %rcx, %rcx` (ATT) hoặc `xor rcx, rcx` (Intel/IDA)
+ngay cả khi mã nguồn C không hề có phép toán XOR nào.
+
+**A. Giải thích tác dụng của lệnh này và phép toán nó thực hiện:**
+*   **Tác dụng:** Lệnh này dùng để **đặt giá trị của thanh ghi về 0**. 
+*   **Logic:** Theo tính chất của phép toán logic XOR, bất kỳ giá trị nào XOR với chính nó cũng sẽ cho kết quả là 0 ($x \oplus x = 0$).
+
+**B. Cách viết nào trực quan hơn để thực hiện thao tác này?**
+*   Cách viết trực quan hơn là dùng lệnh move hằng số 0 vào thanh ghi:
+    `movq $0, %rcx` (ATT) hoặc `mov rcx, 0` (Intel/IDA).
+
+**C. So sánh kích thước byte để mã hóa hai cách trên:**
+*   **`xorq %rcx, %rcx`**: Chỉ tốn **3 bytes** mã máy.
+*   **`movq $0, %rcx`**: Tốn tới **7 bytes** mã máy (vì phải chứa cả hằng số 0 32-bit hoặc 64-bit bên trong lệnh).
+*   **Kết luận:** Trình biên dịch sử dụng `xor` thay vì `mov` vì nó giúp file thực thi nhỏ gọn hơn và bộ xử lý thực thi lệnh này cũng cực kỳ nhanh.
+
+</details>
+
+---
+
+### IDA Pro Insights (Mẹo cho người dịch ngược)
+
+1.  **Nhận diện "Zeroing":** Khi bạn thấy bất kỳ lệnh `xor reg, reg` nào trong IDA (ví dụ `xor eax, eax`), hãy ngay lập tức đọc nó là `reg = 0`. Đây là cách chuẩn để xóa thanh ghi trong thế giới mã máy.
+2.  **Lệnh 32-bit trong hàm 64-bit:** Ở bài 3.11, trình biên dịch thường dùng `xor eax, eax` (2 bytes) thay vì `xor rax, rax` (3 bytes). Nhờ quy ước *Zero-extension*, lệnh 32-bit này vẫn xóa sạch toàn bộ 64-bit của thanh ghi `rax` về 0, giúp tiết kiệm thêm 1 byte nữa.
+3.  **Tối ưu hóa biểu thức (Bài 3.10):** Trình biên dịch có xu hướng sử dụng thanh ghi 64-bit (`orq`, `sarq`) cho các biến `short` (16-bit). Điều này giúp tận dụng tối đa kiến trúc CPU. Khi dịch ngược, nếu thấy `rax` là kết quả cuối cùng của các phép toán trên `rsi`, `rdx`, hãy nhìn vào prototype hàm để xác định kích thước thực tế của biến.
+
+---
+
+### 3.5.5 Special Arithmetic Operations (Các phép toán số học đặc biệt)
+
+Như đã học, việc nhân hai số nguyên 64-bit có thể tạo ra một kết quả cần tới 128-bit để biểu diễn. Kiến trúc x86-64 cung cấp các lệnh hỗ trợ hạn chế cho các con số 128-bit (16 bytes). Intel gọi đại lượng 16-byte này là một **oct word**.
+
+### Hình 3.12: Các phép toán số học đặc biệt (128-bit)
+
+Trong các phép toán này, cặp thanh ghi **`%rdx`** và **`%rax`** được xem như một thanh ghi 128-bit duy nhất (ký hiệu là `rdx:rax`).
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Hiệu ứng (Logic) | Mô tả |
+| :--- | :--- | :--- | :--- |
+| `imulq S` | `imul S` | `rdx:rax = rax * S` | Nhân 128-bit (có dấu) |
+| `mulq S` | `mul S` | `rdx:rax = rax * S` | Nhân 128-bit (không dấu) |
+| `cqto` | **`cqo`** | `rdx:rax = SignExtend(rax)` | Mở rộng dấu `rax` vào `rdx` |
+| `idivq S` | `idiv S` | `rax = rdx:rax / S`<br>`rdx = rdx:rax % S` | Chia 128-bit (có dấu) |
+| `divq S` | `div S` | `rax = rdx:rax / S`<br>`rdx = rdx:rax % S` | Chia 128-bit (không dấu) |
+
+---
+
+### Phân tích phép Nhân (Multiplication)
+
+Lệnh nhân `imulq` có hai dạng khác nhau:
+
+1.  **Dạng hai toán hạng (Dạng phổ biến):** Đã học ở Hình 3.10. Nó nhân hai giá trị 64-bit và tạo ra kết quả 64-bit (chấp nhận rủi ro bị tràn số).
+2.  **Dạng một toán hạng (Dạng đặc biệt):** 
+    *   Sử dụng để tính toán **kết quả đầy đủ 128-bit**.
+    *   **Toán hạng ngầm định:** Một thừa số bắt buộc phải nằm sẵn trong thanh ghi **`%rax`**.
+    *   **Toán hạng nguồn (`S`):** Là thừa số thứ hai (thanh ghi hoặc bộ nhớ).
+    *   **Kết quả:** 64 bit cao được lưu vào **`%rdx`**, 64 bit thấp lưu vào **`%rax`**.
+
+---
+
+### Phân tích phép Chia (Division)
+
+Phép chia trong x86-64 phức tạp hơn vì nó luôn coi số bị chia là một số 128-bit nằm trong cặp thanh ghi `rdx:rax`.
+
+1.  **Chuẩn bị số bị chia:** 
+    *   Nếu bạn chỉ có một số 64-bit trong `%rax` và muốn chia nó, bạn phải "lấp đầy" `%rdx`. 
+    *   Với số có dấu, ta dùng lệnh **`cqto`** (trong IDA là **`cqo`**) để copy bit dấu của `%rax` vào toàn bộ `%rdx`.
+    *   Với số không dấu, ta phải xóa thanh ghi `%rdx` về 0 (ví dụ dùng `xor edx, edx`).
+2.  **Thực hiện phép chia:** Lệnh `idivq S` hoặc `divq S` thực hiện chia `rdx:rax` cho toán hạng `S`.
+3.  **Kết quả:**
+    *   Thương số (Quotient) lưu vào **`%rax`**.
+    *   Số dư (Remainder) lưu vào **`%rdx`**.
+
+---
+
+### IDA Pro Insights (Mẹo nhận diện phép toán 128-bit)
+
+*   **Nhận diện phép Chia/Lấy dư:** Khi bạn thấy lệnh `idiv` hoặc `div`, hãy luôn nhìn lên phía trên nó. Nếu có lệnh `cqo` (hoặc `xor edx, edx`), đó là bước chuẩn bị số bị chia. 
+    *   Sau lệnh `div`, nếu mã nguồn sử dụng kết quả từ `rax`, đó là phép `/`.
+    *   Nếu mã nguồn sử dụng kết quả từ `rdx`, đó là phép `%` (mod).
+*   **Phép nhân full:** Nếu bạn thấy lệnh `imul` hoặc `mul` chỉ có **duy nhất một toán hạng**, hãy nhớ ngay quy tắc: kết quả đang bị "xẻ đôi" nằm ở cả `rdx` và `rax`.
+*   **Tính nhất quán:** Trình biên dịch thường sử dụng `imul` dạng hai toán hạng cho các phép nhân thông thường (vì nhanh hơn), và chỉ dùng dạng một toán hạng khi thực sự cần xử lý các con số khổng lồ hoặc để kiểm tra tràn số.
+
+---
+
+### Ví dụ về phép nhân 128-bit: Hàm `store_uprod`
+
+Đoạn mã C dưới đây minh họa việc tạo ra kết quả 128-bit từ tích của hai số 64-bit không dấu `x` và `y`. Vì chuẩn C thông thường không quy định kiểu dữ liệu 128-bit, chúng ta sử dụng phần mở rộng của GCC là `__int128`.
+
+#### (a) Mã nguồn C
+```c
+#include <inttypes.h>
+
+typedef unsigned __int128 uint128_t;
+
+void store_uprod(uint128_t *dest, uint64_t x, uint64_t y) {
+    *dest = (uint128_t) x * y;
+}
+```
+
+#### (b) Phân tích mã Assembly (Ánh xạ ATT và Intel/IDA Pro)
+**Quy ước:** `dest` trong `%rdi`, `x` trong `%rsi`, `y` trong `%rdx`.
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `movq %rsi, %rax` | `mov rax, rsi` | Copy `x` vào thanh ghi `%rax` (số bị nhân). |
+| 2 | `mulq %rdx` | `mul rdx` | Nhân với `y`. Kết quả 128-bit nằm ở `%rdx:%rax`. |
+| 3 | `movq %rax, (%rdi)` | `mov [rdi], rax` | Lưu 8 byte thấp của kết quả vào địa chỉ `dest`. |
+| 4 | `movq %rdx, 8(%rdi)` | `mov [rdi+8], rdx` | Lưu 8 byte cao của kết quả vào địa chỉ `dest + 8`. |
+| 5 | `ret` | `retn` | Trả về. |
+
+**Quan sát kỹ thuật:**
+*   **Lưu trữ 128-bit:** Việc lưu trữ kết quả đòi hỏi hai lệnh `movq`: một cho 8 byte bậc thấp và một cho 8 byte bậc cao.
+*   **Little-endian:** Do x86-64 là kiến trúc Little-endian, các byte bậc cao được lưu trữ tại địa chỉ bộ nhớ cao hơn (`8(%rdi)`).
+
+---
+
+### Chi tiết về phép Chia (Division)
+
+Phép chia cũng sử dụng cơ chế một toán hạng tương tự như phép nhân. Lệnh chia có dấu `idivq` coi số bị chia là một đại lượng 128-bit nằm trong cặp thanh ghi `%rdx` (64 bit cao) và `%rax` (64 bit thấp).
+
+#### 1. Chuẩn bị số bị chia (Dividend Preparation)
+Đối với hầu hết các ứng dụng của phép chia 64-bit, số bị chia ban đầu được đưa vào thanh ghi `%rax`. Lúc này, ta cần thiết lập các bit của `%rdx` sao cho phù hợp:
+*   **Phép chia không dấu (`divq`):** Thanh ghi `%rdx` phải được đặt về **0** hoàn toàn.
+*   **Phép chia có dấu (`idivq`):** Thanh ghi `%rdx` phải được lấp đầy bởi **bit dấu** của `%rax`.
+
+#### 2. Lệnh `cqto` (Convert Quad to Oct-word)
+Để thực hiện việc bù dấu cho phép chia có dấu, x86-64 cung cấp lệnh đặc biệt **`cqto`**.
+*   **Cơ chế:** Lệnh này không có toán hạng. nó đọc bit dấu từ `%rax` và sao chép nó ra toàn bộ thanh ghi `%rdx`.
+*   **Trong IDA Pro:** Lệnh này thường hiển thị dưới tên gọi **`cqo`**.
+
+#### 3. Kết quả phép toán
+Sau khi thực thi lệnh `idivq S` hoặc `divq S`:
+*   **Thương số (Quotient):** Được lưu vào thanh ghi **`%rax`**.
+*   **Số dư (Remainder):** Được lưu vào thanh ghi **`%rdx`**.
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện phép chia)
+
+*   **Dấu hiệu nhận biết:** Khi bạn thấy một lệnh `idiv` hoặc `div` trong IDA, hãy nhìn lên trên:
+    1.  Nếu thấy `cqo` (hoặc `cqto`): Đây chắc chắn là phép chia số **có dấu** (`signed /` hoặc `signed %`).
+    2.  Nếu thấy `xor edx, edx`: Đây là phép chia số **không dấu** (`unsigned`).
+*   **Phân biệt `/` và `%` trong C:**
+    *   Nếu sau đó code sử dụng giá trị từ `rax` $\rightarrow$ Mã nguồn C dùng toán tử `/`.
+    *   Nếu sau đó code sử dụng giá trị từ `rdx` $\rightarrow$ Mã nguồn C dùng toán tử `%`.
+
+---
+
+### Ví dụ thực tế: Hàm `remdiv` (Tính thương và số dư)
+
+Hàm dưới đây tính toán cả thương số và số dư của hai số nguyên 64-bit có dấu:
+
+#### (a) Mã nguồn C
+```c
+void remdiv(long x, long y, long *qp, long *rp) {
+    long q = x / y;
+    long r = x % y;
+    *qp = q;
+    *rp = r;
+}
+```
+
+#### (b) Phân tích mã Assembly (Đối chiếu ATT và Intel/IDA Pro)
+
+**Ánh xạ thanh ghi:** 
+*   `x` in `%rdi`, `y` in `%rsi`, `qp` in `%rdx`, `rp` in `%rcx`.
+*   *Lưu ý:* Vì lệnh `idivq` bắt buộc sử dụng `%rdx`, nên trình biên dịch phải "sơ tán" con trỏ `qp` đang nằm ở `%rdx` đi chỗ khác trước khi chia.
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `remdiv:` | `remdiv:` | Nhãn hàm. |
+| 2 | `movq %rdx, %r8` | `mov r8, rdx` | **Sơ tán `qp`**: Copy con trỏ `qp` sang `%r8`. |
+| 3 | `movq %rdi, %rax` | `mov rax, rdi` | Chuẩn bị số bị chia: Đưa `x` vào `%rax`. |
+| 4 | **`cqto`** | **`cqo`** | **Bù dấu**: Mở rộng `%rax` vào `%rdx` (tạo số bị chia 128-bit). |
+| 5 | `idivq %rsi` | `idiv rsi` | **Chia cho `y`**: `%rax = x/y`, `%rdx = x%y`. |
+| 6 | `movq %rax, (%r8)` | `mov [r8], rax` | Lưu thương số `q` vào địa chỉ `*qp`. |
+| 7 | `movq %rdx, (%rcx)` | `mov [rcx], rdx` | Lưu số dư `r` vào địa chỉ `*rp`. |
+| 8 | `ret` | `retn` | Trả về. |
+
+---
+
+### Phân tích kỹ thuật (Insights cho IDA Pro)
+
+1.  **Tại sao phải lưu `%rdx`?**
+    *   Theo quy ước gọi hàm (ABI), tham số thứ 3 (`qp`) được truyền vào qua `%rdx`. 
+    *   Tuy nhiên, lệnh `idivq` ở dòng 5 đòi hỏi cặp `%rdx:%rax` phải làm số bị chia, và sau khi chia xong, nó lại dùng `%rdx` để lưu số dư. 
+    *   Do đó, dòng 2 là bắt buộc để không làm mất địa chỉ của con trỏ `qp`.
+
+2.  **Chuẩn bị số bị chia:** 
+    *   Dòng 3 và 4 là bộ đôi luôn đi kèm nhau trước lệnh chia có dấu (`idiv`). Lệnh `cqto` (Intel gọi là `cqo`) đảm bảo số 64-bit trong `%rax` được biến thành số 128-bit hợp lệ để chia.
+
+3.  **Hiệu quả kép:**
+    *   Một lệnh `idivq` duy nhất thực hiện cả hai phép toán `/` (thương) và `%` (số dư). Đây là lý do tại sao trong C, nếu bạn thực hiện cả chia và lấy dư của cùng hai số cạnh nhau, trình biên dịch sẽ chỉ tạo ra một lệnh chia duy nhất trong mã máy để tối ưu tốc độ.
+
+4.  **Phép chia không dấu:**
+    *   Nếu là phép chia không dấu (`unsigned`), trình biên dịch sẽ dùng lệnh **`divq`**. Trước đó, thay vì `cqto`, nó sẽ dùng lệnh `xor %edx, %edx` (hoặc `mov $0, %rdx`) để xóa thanh ghi `%rdx` về 0.
+
+*(Nội dung bức ảnh dừng lại ở phần giải thích về phép chia không dấu sử dụng divq)*.
 
 ---
 

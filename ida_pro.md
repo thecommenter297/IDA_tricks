@@ -1802,8 +1802,181 @@ void remdiv(long x, long y, long *qp, long *rp) {
 4.  **Phép chia không dấu:**
     *   Nếu là phép chia không dấu (`unsigned`), trình biên dịch sẽ dùng lệnh **`divq`**. Trước đó, thay vì `cqto`, nó sẽ dùng lệnh `xor %edx, %edx` (hoặc `mov $0, %rdx`) để xóa thanh ghi `%rdx` về 0.
 
-*(Nội dung bức ảnh dừng lại ở phần giải thích về phép chia không dấu sử dụng divq)*.
+---
+
+### Practice Problem 3.12: Chuyển đổi mã Assembly sang phép chia không dấu
+
+<img width="785" height="344" alt="image" src="https://github.com/user-attachments/assets/587ba30e-b233-488e-9014-23a928c53c82" />
+
+
+**Đề bài:**
+Xét hàm `uremdiv` tính thương và số dư của hai số 64-bit **không dấu**:
+
+```c
+void uremdiv(unsigned long x, unsigned long y,
+             unsigned long *qp, unsigned long *rp) {
+    unsigned long q = x / y;
+    unsigned long r = x % y;
+    *qp = q;
+    *rp = r;
+}
+```
+
+Hãy sửa đổi mã Assembly của hàm `remdiv` (phép chia có dấu đã học ở trang trước) để thực hiện hàm này.
+
+---
+
+### Lời giải: Mã Assembly cho phép chia không dấu
+
+**Ánh xạ thanh ghi:** `x` (%rdi), `y` (%rsi), `qp` (%rdx), `rp` (%rcx).
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích sự thay đổi |
+| :--- | :--- | :--- | :--- |
+| 1 | `uremdiv:` | `uremdiv:` | Nhãn hàm. |
+| 2 | `movq %rdx, %r8` | `mov r8, rdx` | Sơ tán con trỏ `qp` sang `%r8` (không đổi). |
+| 3 | `movq %rdi, %rax` | `mov rax, rdi` | Đưa số bị chia `x` vào `%rax` (không đổi). |
+| 4 | **`movq $0, %rdx`** | **`xor edx, edx`** | **Thay đổi:** Xóa sạch `%rdx` về 0 thay vì dùng `cqto`. |
+| 5 | **`divq %rsi`** | **`div rsi`** | **Thay đổi:** Dùng lệnh chia không dấu `divq`. |
+| 6 | `movq %rax, (%r8)` | `mov [r8], rax` | Lưu thương số (không đổi). |
+| 7 | `movq %rdx, (%rcx)` | `mov [rcx], rdx` | Lưu số dư (không đổi). |
+| 8 | `ret` | `retn` | Trả về. |
+
+---
+
+### Phân tích sự khác biệt (Insights cho IDA Pro)
+
+1.  **Chuẩn bị số bị chia (Dividend Preparation):**
+    *   **Có dấu (`signed`):** Phải dùng lệnh `cqto` (Intel: `cqo`) để mở rộng bit dấu từ `%rax` vào `%rdx`. Nếu không, phép chia sẽ sai nếu `x` là số âm.
+    *   **Không dấu (`unsigned`):** Phải đảm bảo `%rdx` bằng **0**. Trình biên dịch thường dùng `xor edx, edx` vì nó ngắn (2 bytes) và nhanh hơn `movq $0, %rdx`.
+
+2.  **Lệnh thực thi:**
+    *   **`idivq`**: Dành cho số có dấu.
+    *   **`divq`**: Dành cho số không dấu.
+
+3.  **Cách nhận diện kiểu dữ liệu trong IDA:**
+    *   Nếu bạn đang phân tích một hàm mà không có mã nguồn, việc thấy lệnh `xor edx, edx` ngay trước lệnh `div` là bằng chứng đanh thép rằng các biến liên quan là **`unsigned`**.
+    *   Ngược lại, nếu thấy `cqo` (hoặc `cdq` cho 32-bit) đi kèm với `idiv`, chắc chắn đó là kiểu **có dấu**.
+
+---
+
+<tiếp tục>
+
+Dưới đây là phần nội dung dẫn nhập cho mục **3.6 Control** (Điều khiển luồng). Đây là chương quan trọng nhất để bạn hiểu cách IDA Pro vẽ nên các sơ đồ khối (Graph View) với các mũi tên xanh/đỏ đại diện cho logic rẽ nhánh.
+
+---
+
+## 3.6 Control (Điều khiển luồng)
+
+Cho đến nay, chúng ta mới chỉ xem xét hành vi của **mã đường thẳng (straight-line code)**, nơi các lệnh thực thi nối tiếp nhau theo trình tự. Tuy nhiên, các cấu trúc trong C như:
+*   **Conditionals** (Câu lệnh điều kiện: `if`, `else`)
+*   **Loops** (Vòng lặp: `while`, `for`, `do-while`)
+*   **Switches** (Câu lệnh rẽ nhánh nhiều trường hợp)
+
+Tất cả đều yêu cầu **thực thi có điều kiện (conditional execution)**, nghĩa là trình tự thực thi phụ thuộc vào kết quả của các bài kiểm tra dữ liệu (tests).
+
+### Cơ chế mức máy của cấu trúc điều kiện
+
+Mã máy cung cấp hai cơ chế cơ bản để triển khai hành vi có điều kiện:
+1.  **Kiểm tra giá trị dữ liệu:** Thực hiện phép so sánh hoặc kiểm tra bit.
+2.  **Thay đổi luồng:** Dựa trên kết quả kiểm tra, bộ xử lý sẽ:
+    *   Thay đổi **Control Flow** (Luồng điều khiển): Nhảy đến một vị trí khác trong chương trình.
+    *   Thay đổi **Data Flow** (Luồng dữ liệu): Chỉ chuyển dữ liệu khi điều kiện thỏa mãn (Conditional Moves).
+
+---
+
+### Cách luồng điều khiển hoạt động
+
+Thông thường, cả câu lệnh trong C và lệnh mã máy đều được thực thi **tuần tự (sequentially)** theo thứ tự xuất hiện.
+*   **Lệnh `jump`:** Là công cụ cốt lõi để thay đổi thứ tự thực thi. Nó chỉ thị cho bộ xử lý chuyển quyền điều khiển sang một phần khác của chương trình, thường là dựa trên kết quả của một phép thử nào đó.
+*   **Vai trò của Trình biên dịch:** Phải tạo ra chuỗi các lệnh máy dựa trên các cơ chế cấp thấp này để hiện thực hóa các cấu trúc điều khiển bậc cao của C.
+
+---
+
+### Lộ trình nghiên cứu của Mục 3.6:
+1.  Tìm hiểu hai cách triển khai các phép toán có điều kiện.
+2.  Mô tả các phương pháp biểu diễn vòng lặp (Loops).
+3.  Mô tả cách xử lý câu lệnh `switch`.
+
+---
+
+### IDA Pro Insights (Tầm quan trọng của Control Flow)
+
+*   **Graph View:** Khi bạn nhấn `Space` trong IDA để chuyển sang Graph View, các "Basic Blocks" (khối lệnh đường thẳng) được kết nối với nhau bởi các mũi tên chính là biểu hiện của phần **Control** này.
+*   **Mũi tên Xanh lá (Green):** Nhánh thực thi khi điều kiện là **Đúng (True)**.
+*   **Mũi tên Đỏ (Red):** Nhánh thực thi khi điều kiện là **Sai (False)**.
+*   **Mũi tên Xanh dương (Blue):** Nhánh nhảy không điều kiện (Unconditional jump).
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 229, tập trung vào các mã điều kiện (**Condition Codes**) — các "flag" bên trong CPU quyết định việc rẽ nhánh của chương trình. Đây là kiến thức nền tảng để hiểu cách các lệnh `jz`, `jne`, `jg`... hoạt động trong IDA Pro.
+
+---
+
+## 3.6.1 Condition Codes (Mã điều kiện)
+
+Ngoài các thanh ghi số nguyên, CPU còn duy trì một tập hợp các thanh ghi mã điều kiện 1-bit (thanh ghi Flag) mô tả các đặc tính của phép toán số học hoặc logic gần nhất. Các flag này có thể được kiểm tra để thực hiện các lệnh nhảy có điều kiện.
+
+### Các mã điều kiện hữu dụng nhất:
+
+| Flag | Tên gọi | Ý nghĩa (Khi flag = 1) |
+| :--- | :--- | :--- |
+| **CF** | **Carry flag** | Phép toán gần nhất gây ra tràn số đối với số **không dấu**. |
+| **ZF** | **Zero flag** | Phép toán gần nhất cho kết quả bằng **0**. |
+| **SF** | **Sign flag** | Phép toán gần nhất cho kết quả **âm** (Số có dấu). |
+| **OF** | **Overflow flag** | Phép toán gần nhất gây ra tràn số bù hai (số **có dấu**). |
+
+### Ví dụ: Phép toán `t = a + b`
+Giả sử ta thực hiện lệnh `ADD`. Các flag sẽ được thiết lập tương ứng với các biểu thức logic trong C sau đây:
+*   **CF:** `(unsigned) t < (unsigned) a` (Kiểm tra tràn số không dấu).
+*   **ZF:** `(t == 0)` (Kết quả bằng 0).
+*   **SF:** `(t < 0)` (Kết quả âm).
+*   **OF:** `(a < 0 == b < 0) && (t < 0 != a < 0)` (Kiểm tra tràn số có dấu).
+
+---
+
+### Quy tắc thiết lập Flag của các lớp lệnh:
+
+1.  **Lệnh `leaq`:** **KHÔNG** thay đổi bất kỳ mã điều kiện nào, vì nó được dùng để tính toán địa chỉ.
+2.  **Các lệnh Logic (XOR, AND, OR):** Flag **CF** và **OF** luôn được đặt về **0**.
+3.  **Các lệnh Dịch bit (Shift):** Flag **CF** sẽ nhận giá trị của bit cuối cùng bị dịch ra ngoài, còn **OF** được đặt về **0**.
+4.  **Lệnh `INC` và `DEC`:** Thiết lập **ZF**, **SF**, **OF** nhưng giữ nguyên (không thay đổi) **CF**.
+
+---
+
+### Các lệnh So sánh và Kiểm tra (CMP & TEST)
+
+Có hai lớp lệnh (Hình 3.13) chuyên dùng để thiết lập mã điều kiện mà không làm thay đổi bất kỳ thanh ghi đa năng nào khác.
+
+#### Hình 3.13: Lệnh so sánh và kiểm tra
+
+| Lệnh (ATT) | Lệnh (Intel/IDA) | Dựa trên phép toán | Mô tả |
+| :--- | :--- | :--- | :--- |
+| **CMP** $S_1, S_2$ | `cmp S2, S1` | $S_2 - S_1$ | **So sánh**: Giống lệnh `SUB` nhưng chỉ cập nhật flag, không lưu kết quả trừ. |
+| `cmpb`, `cmpw` | `cmp` | | So sánh byte, word... |
+| **TEST** $S_1, S_2$ | `test S2, S1` | $S_1  \\&  S_2$ | **Kiểm tra**: Giống lệnh `AND` nhưng chỉ cập nhật flag, không lưu kết quả. |
+| `testb`, `testw` | `test` | | Kiểm tra byte, word... |
+
+**Lưu ý về thứ tự toán hạng của CMP (ATT):**
+Trong cú pháp ATT, lệnh `cmp $S_1, S_2$` thực hiện phép tính $S_2 - S_1$. Điều này thường gây nhầm lẫn khi đọc:
+*   `cmp %rax, %rdx` $\rightarrow$ Đang so sánh `%rdx` với `%rax`.
+
+---
+
+### IDA Pro Insights (Kỹ năng đọc luồng điều khiển)
+
+1.  **Mẫu hình `test rax, rax`:** 
+    *   Bạn sẽ thấy mẫu này cực kỳ nhiều trong IDA ngay sau một lời gọi hàm.
+    *   **Mục đích:** Kiểm tra xem giá trị trả về trong `rax` có bằng 0 hay không (ví dụ kiểm tra con trỏ NULL).
+    *   Nếu `rax` bằng 0, **ZF** sẽ được đặt thành 1.
+2.  **Phân biệt CMP và TEST:**
+    *   Dùng **CMP** khi muốn so sánh lớn hơn, nhỏ hơn, bằng nhau giữa hai giá trị.
+    *   Dùng **TEST** khi muốn kiểm tra một bit cụ thể (Bitwise mask) hoặc kiểm tra một giá trị với chính nó (để xem nó là 0, âm hay dương).
+3.  **Flag và rẽ nhánh:** 
+    *   IDA Pro sử dụng các flag này để vẽ mũi tên. Ví dụ: Nếu một lệnh `jz` (Jump if Zero) đi sau `test rax, rax`, mũi tên xanh lá sẽ dẫn đến khối lệnh thực thi khi `rax == 0`.
+
+*(Nội dung bức ảnh dừng lại ở phần giải thích về lệnh TEST và các toán hạng lặp lại)*.
 
 ---
 
 <tạm dừng>
+

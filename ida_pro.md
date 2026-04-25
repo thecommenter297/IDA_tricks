@@ -1974,9 +1974,596 @@ Trong cú pháp ATT, lệnh `cmp $S_1, S_2$` thực hiện phép tính $S_2 - S_
 3.  **Flag và rẽ nhánh:** 
     *   IDA Pro sử dụng các flag này để vẽ mũi tên. Ví dụ: Nếu một lệnh `jz` (Jump if Zero) đi sau `test rax, rax`, mũi tên xanh lá sẽ dẫn đến khối lệnh thực thi khi `rax == 0`.
 
-*(Nội dung bức ảnh dừng lại ở phần giải thích về lệnh TEST và các toán hạng lặp lại)*.
+---
+
+## 3.6.2 Accessing the Condition Codes (Truy cập các mã điều kiện)
+
+Thay vì đọc trực tiếp các mã điều kiện (flag), có 3 cách phổ biến để sử dụng chúng:
+1.  Thiết lập một byte đơn lẻ thành **0** hoặc **1** tùy thuộc vào sự kết hợp của các mã điều kiện.
+2.  Nhảy có điều kiện (Jump) đến một phần khác của chương trình.
+3.  Di chuyển dữ liệu có điều kiện (Conditional transfer of data).
+
+### Lớp lệnh SET
+
+Trường hợp đầu tiên sử dụng các lệnh thuộc lớp **`SET`**. Các lệnh này sẽ ghi giá trị **0** hoặc **1** vào một byte đích dựa trên sự kết hợp của các flag trạng thái.
+
+**Lưu ý quan trọng về hậu tố (Suffixes):**
+Đối với lớp lệnh `SET`, các hậu tố **KHÔNG** chỉ định kích thước toán hạng mà chỉ định **điều kiện so sánh**. 
+*   **Ví dụ:** Lệnh `setl` (Set Less - nhỏ hơn) và `setb` (Set Below - nhỏ hơn/không dấu) hoàn toàn khác nhau về điều kiện kiểm tra, mặc dù cả hai đều chỉ ghi dữ liệu vào 1 byte.
+*   **Cảnh báo:** Đừng nhầm lẫn hậu tố `l` trong `setl` là "long word" hay `b` trong `setb` là "byte".
 
 ---
 
-<tạm dừng>
+### Cách thức hoạt động và Đích đến
 
+*   **Toán hạng đích:** Một lệnh `SET` có thể ghi vào một trong các **thanh ghi đơn byte bậc thấp** (như `%al`, `%bl`,... - xem lại Hình 3.2) hoặc một **vị trí bộ nhớ 1-byte**.
+*   **Cơ chế:** Lệnh này chỉ cập nhật 1 byte duy nhất đó thành 0 hoặc 1.
+*   **Tạo kết quả 32/64-bit:** Vì lệnh `SET` chỉ tác động lên 1 byte, nên để có được kết quả 32-bit hoặc 64-bit hoàn chỉnh (ví dụ để trả về một giá trị `int` hoặc `long` trong C), ta phải thực hiện thêm bước **xóa các bit bậc cao** (clear high-order bits) của thanh ghi đó.
+
+---
+
+### IDA Pro Insights (Cách nhận diện Boolean trong C)
+
+Khi bạn soi mã trong IDA Pro, các lệnh `SET` thường xuất hiện trong các đoạn mã tính toán logic (ví dụ: `return a < b;`).
+
+| Lệnh (ATT/Sách) | Lệnh (Intel/IDA Pro) | Giải thích thực tế |
+| :--- | :--- | :--- |
+| `setl %al` | `setl al` | Nếu điều kiện "Nhỏ hơn" thỏa mãn, đặt `al = 1`, ngược lại `al = 0`. |
+| `setne %al` | `setnz al` | (Set Not Zero) Đặt `al = 1` nếu kết quả so sánh trước đó là khác nhau. |
+
+**Mẫu hình điển hình (Idiom):**
+Trình biên dịch thường kết hợp `SET` với `MOVZX` để xóa các bit thừa:
+1.  `cmp rdi, rsi` (So sánh a và b)
+2.  `setl al` (Đặt al = 1 nếu a < b)
+3.  **`movzx eax, al`** (Xóa 31 bit cao của `eax`, biến `al` thành một số `int` 32-bit hoàn chỉnh).
+
+---
+
+### Ví dụ: Tính toán biểu thức C `a < b`
+Giả sử `a` và `b` đều có kiểu `long`. Một chuỗi lệnh điển hình để tính toán biểu thức này diễn ra như sau:
+
+---
+
+### Hình 3.14: Các lệnh SET
+
+<img width="972" height="617" alt="image" src="https://github.com/user-attachments/assets/78799fbb-c9fb-4d7c-a2a0-8229c52ec733" />
+
+
+Mỗi lệnh này thiết lập một byte đơn lẻ thành **0** hoặc **1** dựa trên sự kết hợp của các mã điều kiện (flag). Một số lệnh có tên đồng nghĩa (Synonyms).
+
+| Lệnh (ATT) | Intel (IDA) | Điều kiện (Flag logic) | Mô tả (Dành cho `CMP S1, S2`) |
+| :--- | :--- | :--- | :--- |
+| **`sete D`** | `setz` | `ZF` | Bằng nhau / Bằng 0 (Equal / zero) |
+| **`setne D`** | `setnz` | `~ZF` | Khác nhau / Khác 0 (Not equal / not zero) |
+| **Số có dấu** | | | |
+| **`sets D`** | `sets` | `SF` | Kết quả âm (Negative) |
+| **`setns D`** | `setns` | `~SF` | Kết quả không âm (Nonnegative) |
+| **`setg D`** | `setg` | `~(SF ^ OF) & ~ZF` | Lớn hơn (Greater) |
+| **`setge D`** | `setge` | `~(SF ^ OF)` | Lớn hơn hoặc bằng (Greater or equal) |
+| **`setl D`** | `setl` | `SF ^ OF` | Nhỏ hơn (Less) |
+| **`setle D`** | `setle` | `(SF ^ OF) \| ZF` | Nhỏ hơn hoặc bằng (Less or equal) |
+| **Số không dấu**| | | |
+| **`seta D`** | `seta` | `~CF & ~ZF` | Lớn hơn (Above) |
+| **`setae D`** | `setae` | `~CF` | Lớn hơn hoặc bằng (Above or equal) |
+| **`setb D`** | `setb` | `CF` | Nhỏ hơn (Below) |
+| **`setbe D`** | `setbe` | `CF \| ZF` | Nhỏ hơn hoặc bằng (Below or equal) |
+
+---
+
+### Ví dụ hàm so sánh: `comp`
+
+Xét hàm C so sánh hai giá trị kiểu `long`:
+```c
+int comp(long a, long b) {
+    return a < b;
+}
+```
+
+**Mã Assembly tương ứng:**
+*Quy ước: a trong %rdi, b trong %rsi*
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `cmpq %rsi, %rdi` | `cmp rdi, rsi` | So sánh `a` với `b` (Thực hiện `a - b`). |
+| 2 | `setl %al` | `setl al` | Đặt `al = 1` nếu `a < b` (có dấu). |
+| 3 | `movzbl %al, %eax` | `movzx eax, al` | Xóa các bit cao của `%rax`, kết quả là 0 hoặc 1. |
+| 4 | `ret` | `retn` | Trả về kết quả trong `%eax`. |
+
+---
+
+### Phân tích kỹ thuật từ sách:
+
+1.  **Thứ tự toán hạng của `cmpq`:** Mặc dù trong ATT toán hạng được liệt kê là `%rsi` (b) rồi đến `%rdi` (a), nhưng phép so sánh thực tế là **`a` so với `b`**. Đây là điểm gây bối rối nhất khi đọc cú pháp ATT.
+2.  **Tên đồng nghĩa (Synonyms):** Trình biên dịch và trình nghịch đảo mã (Disassembler) có thể chọn các tên khác nhau cho cùng một lệnh máy. Ví dụ: `setg` (lớn hơn) và `setnle` (không nhỏ hơn hoặc bằng) là một. IDA Pro thường ưu tiên các tên phổ biến như `setz`, `setnz`.
+3.  **Sự khác biệt Signed vs Unsigned:**
+    *   Máy tính **không** gán kiểu dữ liệu (có dấu hay không dấu) cho thanh ghi. 
+    *   Thay vào đó, nó sử dụng các lệnh khác nhau để thông báo cho CPU cách đọc Flag. 
+    *   Ví dụ: Để thực hiện `a < b`, nếu `a, b` có dấu trình biên dịch dùng `setl` (dựa trên `SF` và `OF`). Nếu `a, b` không dấu, nó dùng `setb` (dựa trên `CF`).
+
+---
+
+### IDA Pro Insights (Góc nhìn thực tế)
+
+*   **Tại sao dùng `movzx`?** Lệnh `setl` chỉ ghi vào `al` (8 bit thấp). Nếu không có lệnh `movzx eax, al`, các bit cũ còn sót lại trong `%rax` sẽ làm sai lệch kết quả trả về của hàm (vốn là kiểu `int` 32-bit).
+*   **Zero-extension:** Lưu ý rằng lệnh `movzx eax, al` không chỉ xóa các bit cao của `eax` mà còn tự động xóa luôn 32 bit cao nhất của thanh ghi 64-bit `rax` về 0.
+*   **Logic toán học của Flag:** IDA giúp bạn không cần nhớ `SF ^ OF`, nhưng bạn nên nhớ:
+    *   **`l` (Less)** / **`g` (Greater)**: Dùng cho số **có dấu** (Signed).
+    *   **`b` (Below)** / **`a` (Above)**: Dùng cho số **không dấu** (Unsigned).
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 233, bao gồm hai bài tập thực hành (3.13 và 3.14) nhằm rèn luyện khả năng suy luận ngược từ mã máy (lệnh so sánh/kiểm tra) về kiểu dữ liệu và toán tử so sánh trong C.
+
+---
+
+### Practice Problem 3.13: Suy luận kiểu dữ liệu và toán tử so sánh
+
+<details>
+<summary><b>Nhấn để xem phân tích chi tiết mã nguồn C từ Assembly</b></summary>
+
+**Đề bài:**
+Cho hàm C sau:
+```c
+int comp(data_t a, data_t b) {
+    return a COMP b;
+}
+```
+Giả sử `a` nằm trong một phần của `%rdi` và `b` nằm trong một phần của `%rsi`. Dựa trên các chuỗi lệnh assembly dưới đây, hãy xác định kiểu dữ liệu `data_t` và toán tử so sánh `COMP`.
+
+| Câu | Mã Assembly (ATT) | Mã Intel (IDA Pro) | Kiểu dữ liệu (`data_t`) | Toán tử (`COMP`) | Giải thích |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **A** | `cmpl %esi, %edi`<br>`setl %al` | `cmp edi, esi`<br>`setl al` | **`int`** | **`<`** | `cmpl` là 4-byte. `setl` là so sánh nhỏ hơn (có dấu). |
+| **B** | `cmpw %si, %di`<br>`setge %al` | `cmp di, si`<br>`setge al` | **`short`** | **`>=`** | `cmpw` là 2-byte. `setge` là lớn hơn hoặc bằng (có dấu). |
+| **C** | `cmpb %sil, %dil`<br>`setbe %al` | `cmp dil, sil`<br>`setbe al` | **`unsigned char`** | **`<=`** | `cmpb` là 1-byte. `setbe` là nhỏ hơn hoặc bằng (không dấu - *below or equal*). |
+| **D** | `cmpq %rsi, %rdi`<br>`setne %al` | `cmp rdi, rsi`<br>`setne al` | **`long`**, **`unsigned long`**, hoặc **`pointer`** | **`!=`** | `cmpq` là 8-byte. `setne` (khác nhau) dùng chung cho cả có dấu và không dấu. |
+
+</details>
+
+---
+
+### Practice Problem 3.14: Suy luận phép thử với giá trị 0
+
+<details>
+<summary><b>Nhấn để xem phân tích chi tiết các phép thử logic</b></summary>
+
+**Đề bài:**
+Cho hàm C sau:
+```c
+int test(data_t a) {
+    return a TEST 0;
+}
+```
+Giả sử `a` nằm trong một phần của thanh ghi `%rdi`. Hãy xác định các kiểu dữ liệu `data_t` và toán tử so sánh `TEST` tương ứng với mỗi chuỗi lệnh sau.
+
+| Câu | Mã Assembly (ATT) | Mã Intel (IDA Pro) | Kiểu dữ liệu (`data_t`) | Toán tử (`TEST`) | Giải thích |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **A** | `testq %rdi, %rdi`<br>`setge %al` | `test rdi, rdi`<br>`setge al` | **`long`** | **`>=`** | `testq` là 8-byte. `setge` là lớn hơn hoặc bằng (có dấu). |
+| **B** | `testw %di, %di`<br>`sete %al` | `test di, di`<br>`sete al` | **`short`** hoặc **`unsigned short`** | **`==`** | `testw` là 2-byte. `sete` (bằng 0) dùng chung cho cả hai loại. |
+| **C** | `testb %dil, %dil`<br>`seta %al` | `test dil, dil`<br>`seta al` | **`unsigned char`** | **`>`** | `testb` là 1-byte. `seta` là lớn hơn (không dấu - *above*). |
+| **D** | `testl %edi, %edi`<br>`setle %al` | `test edi, edi`<br>`setle al` | **`int`** | **`<=`** | `testl` là 4-byte. `setle` là nhỏ hơn hoặc bằng (có dấu). |
+
+</details>
+
+---
+
+### IDA Pro Insights (Mẹo nhận diện nhanh)
+
+1.  **Hệ lệnh TEST:** Trong IDA, lệnh `test reg, reg` là cách tiêu chuẩn để kiểm tra một giá trị so với số 0.
+    *   Nếu theo sau là `setz` (hoặc `jz`): Kiểm tra `if (reg == 0)`.
+    *   Nếu theo sau là `setnz` (hoặc `jnz`): Kiểm tra `if (reg != 0)`.
+    *   Nếu theo sau là `sets` (hoặc `js`): Kiểm tra `if (reg < 0)` (số có dấu).
+2.  **Kích thước thanh ghi:** 
+    *   `dil`: 1 byte (`char`).
+    *   `di`: 2 bytes (`short`).
+    *   `edi`: 4 bytes (`int`).
+    *   `rdi`: 8 bytes (`long` hoặc con trỏ).
+3.  **Hậu tố lệnh SET:** Hãy luôn nhớ:
+    *   **`e` / `ne`**: Dành cho so sánh bằng/khác (không phân biệt dấu).
+    *   **`g` / `l` / `ge` / `le`**: Dành cho so sánh **CÓ DẤU**.
+    *   **`a` / `b` / `ae` / `be`**: Dành cho so sánh **KHÔNG DẤU**.
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 233, bao gồm hai bài tập thực hành (3.13 và 3.14) nhằm rèn luyện khả năng suy luận ngược từ mã máy (lệnh so sánh/kiểm tra) về kiểu dữ liệu và toán tử so sánh trong C.
+
+---
+
+### Practice Problem 3.13: Suy luận kiểu dữ liệu và toán tử so sánh
+
+<details>
+<summary><b>Nhấn để xem phân tích chi tiết mã nguồn C từ Assembly</b></summary>
+
+**Đề bài:**
+Cho hàm C sau:
+```c
+int comp(data_t a, data_t b) {
+    return a COMP b;
+}
+```
+Giả sử `a` nằm trong một phần của `%rdi` và `b` nằm trong một phần của `%rsi`. Dựa trên các chuỗi lệnh assembly dưới đây, hãy xác định kiểu dữ liệu `data_t` và toán tử so sánh `COMP`.
+
+| Câu | Mã Assembly (ATT) | Mã Intel (IDA Pro) | Kiểu dữ liệu (`data_t`) | Toán tử (`COMP`) | Giải thích |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **A** | `cmpl %esi, %edi`<br>`setl %al` | `cmp edi, esi`<br>`setl al` | **`int`** | **`<`** | `cmpl` là 4-byte. `setl` là so sánh nhỏ hơn (có dấu). |
+| **B** | `cmpw %si, %di`<br>`setge %al` | `cmp di, si`<br>`setge al` | **`short`** | **`>=`** | `cmpw` là 2-byte. `setge` là lớn hơn hoặc bằng (có dấu). |
+| **C** | `cmpb %sil, %dil`<br>`setbe %al` | `cmp dil, sil`<br>`setbe al` | **`unsigned char`** | **`<=`** | `cmpb` là 1-byte. `setbe` là nhỏ hơn hoặc bằng (không dấu - *below or equal*). |
+| **D** | `cmpq %rsi, %rdi`<br>`setne %al` | `cmp rdi, rsi`<br>`setne al` | **`long`**, **`unsigned long`**, hoặc **`pointer`** | **`!=`** | `cmpq` là 8-byte. `setne` (khác nhau) dùng chung cho cả có dấu và không dấu. |
+
+</details>
+
+---
+
+### Practice Problem 3.14: Suy luận phép thử với giá trị 0
+
+<details>
+<summary><b>Nhấn để xem phân tích chi tiết các phép thử logic</b></summary>
+
+**Đề bài:**
+Cho hàm C sau:
+```c
+int test(data_t a) {
+    return a TEST 0;
+}
+```
+Giả sử `a` nằm trong một phần của thanh ghi `%rdi`. Hãy xác định các kiểu dữ liệu `data_t` và toán tử so sánh `TEST` tương ứng với mỗi chuỗi lệnh sau.
+
+| Câu | Mã Assembly (ATT) | Mã Intel (IDA Pro) | Kiểu dữ liệu (`data_t`) | Toán tử (`TEST`) | Giải thích |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **A** | `testq %rdi, %rdi`<br>`setge %al` | `test rdi, rdi`<br>`setge al` | **`long`** | **`>=`** | `testq` là 8-byte. `setge` là lớn hơn hoặc bằng (có dấu). |
+| **B** | `testw %di, %di`<br>`sete %al` | `test di, di`<br>`sete al` | **`short`** hoặc **`unsigned short`** | **`==`** | `testw` là 2-byte. `sete` (bằng 0) dùng chung cho cả hai loại. |
+| **C** | `testb %dil, %dil`<br>`seta %al` | `test dil, dil`<br>`seta al` | **`unsigned char`** | **`>`** | `testb` là 1-byte. `seta` là lớn hơn (không dấu - *above*). |
+| **D** | `testl %edi, %edi`<br>`setle %al` | `test edi, edi`<br>`setle al` | **`int`** | **`<=`** | `testl` là 4-byte. `setle` là nhỏ hơn hoặc bằng (có dấu). |
+
+</details>
+
+---
+
+### IDA Pro Insights (Mẹo nhận diện nhanh)
+
+1.  **Hệ lệnh TEST:** Trong IDA, lệnh `test reg, reg` là cách tiêu chuẩn để kiểm tra một giá trị so với số 0.
+    *   Nếu theo sau là `setz` (hoặc `jz`): Kiểm tra `if (reg == 0)`.
+    *   Nếu theo sau là `setnz` (hoặc `jnz`): Kiểm tra `if (reg != 0)`.
+    *   Nếu theo sau là `sets` (hoặc `js`): Kiểm tra `if (reg < 0)` (số có dấu).
+2.  **Kích thước thanh ghi:** 
+    *   `dil`: 1 byte (`char`).
+    *   `di`: 2 bytes (`short`).
+    *   `edi`: 4 bytes (`int`).
+    *   `rdi`: 8 bytes (`long` hoặc con trỏ).
+3.  **Hậu tố lệnh SET:** Hãy luôn nhớ:
+    *   **`e` / `ne`**: Dành cho so sánh bằng/khác (không phân biệt dấu).
+    *   **`g` / `l` / `ge` / `le`**: Dành cho so sánh **CÓ DẤU**.
+    *   **`a` / `b` / `ae` / `be`**: Dành cho so sánh **KHÔNG DẤU**.
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 234, tập trung vào **3.6.3 Jump Instructions**. Đây là xương sống của mọi cấu trúc điều khiển, giải thích cách chương trình "nhảy" từ điểm này sang điểm khác thay vì chạy tuần tự.
+
+---
+
+## 3.6.3 Jump Instructions (Các lệnh nhảy)
+
+Thông thường, các lệnh thực thi nối tiếp nhau theo thứ tự xuất hiện. Lệnh **`jump`** có thể khiến việc thực thi chuyển sang một vị trí hoàn toàn mới trong chương trình. Các đích đến của lệnh nhảy thường được đánh dấu bằng các **nhãn (labels)** trong mã assembly.
+
+### Ví dụ về trình tự thực thi:
+```assembly
+    movq $0, %rax       ; Thiết lập rax = 0
+    jmp .L1             ; Nhảy đến nhãn .L1
+    movq (%rax), %rdx   ; Lệnh này bị bỏ qua (nếu chạy sẽ gây lỗi null pointer)
+.L1:
+    popq %rdx           ; Đích đến của lệnh nhảy
+```
+Trong ví dụ này, lệnh `jmp .L1` khiến chương trình bỏ qua lệnh `movq` và tiếp tục thực thi tại lệnh `popq`.
+
+---
+
+### Hình 3.15: Các lệnh nhảy (Jump Instructions)
+
+Lệnh nhảy có hai loại: **Không điều kiện** (luôn nhảy) và **Có điều kiện** (chỉ nhảy khi flag thỏa mãn).
+
+| Lệnh (ATT) | Intel (IDA) | Điều kiện nhảy | Mô tả |
+| :--- | :--- | :--- | :--- |
+| **`jmp Label`** | `jmp Label` | 1 (Luôn nhảy) | Nhảy trực tiếp |
+| **`jmp *Op`** | `jmp Op` | 1 (Luôn nhảy) | Nhảy gián tiếp |
+| **`je Label`** | `jz` | `ZF` | Bằng nhau / Bằng 0 |
+| **`jne Label`** | `jnz` | `~ZF` | Khác nhau / Khác 0 |
+| **`js Label`** | `js` | `SF` | Số âm |
+| **`jns Label`** | `jns` | `~SF` | Số không âm |
+| **Số có dấu** | | | |
+| **`jg Label`** | `jg` | `~(SF ^ OF) & ~ZF` | Lớn hơn |
+| **`jge Label`** | `jge` | `~(SF ^ OF)` | Lớn hơn hoặc bằng |
+| **`jl Label`** | `jl` | `SF ^ OF` | Nhỏ hơn |
+| **`jle Label`** | `jle` | `(SF ^ OF) \| ZF` | Nhỏ hơn hoặc bằng |
+| **Số không dấu**| | | |
+| **`ja Label`** | `ja` | `~CF & ~ZF` | Lớn hơn (Above) |
+| **`jae Label`** | `jae` | `~CF` | Lớn hơn hoặc bằng (Above or equal) |
+| **`jb Label`** | `jb` | `CF` | Nhỏ hơn (Below) |
+| **`jbe Label`** | `jbe` | `CF \| ZF` | Nhỏ hơn hoặc bằng (Below or equal) |
+
+---
+
+### Phân loại lệnh nhảy: Trực tiếp và Gián tiếp
+
+1.  **Direct Jump (Nhảy trực tiếp):**
+    *   Đích đến là một nhãn được viết trực tiếp trong mã nguồn (ví dụ: `jmp .L1`).
+    *   Trong file thực thi nhị phân, địa chỉ đích thường được mã hóa dưới dạng độ lệch (offset) so với lệnh hiện tại.
+
+2.  **Indirect Jump (Nhảy gián tiếp):**
+    *   Đích đến được đọc từ một thanh ghi hoặc một vị trí bộ nhớ.
+    *   **Cú pháp ATT:** Sử dụng dấu `*` trước toán hạng (ví dụ: `jmp *%rax` sử dụng giá trị trong `%rax` làm địa chỉ đích; `jmp *(%rax)` đọc địa chỉ đích từ bộ nhớ tại nơi `%rax` trỏ tới).
+    *   **Trong IDA Pro:** Bạn sẽ thấy lệnh này phổ biến trong các bảng nhảy (jump tables) của lệnh `switch` hoặc khi gọi các hàm ảo (virtual functions) trong C++.
+
+---
+
+### IDA Pro Insights (Kỹ năng phân tích luồng)
+
+*   **Tên lệnh (Mnemonics):** IDA thường dùng `jz`/`jnz` thay vì `je`/`jne`. Hãy nhớ chúng là một.
+*   **Graph View:** Mỗi lệnh nhảy có điều kiện sẽ tạo ra hai nhánh thoát từ một khối lệnh (Basic Block). 
+    *   Nhánh nhảy (đúng điều kiện) thường là mũi tên **xanh lá**.
+    *   Nhánh không nhảy (chạy tiếp lệnh dưới) là mũi tên **đỏ**.
+*   **Nhảy gián tiếp:** Nếu bạn thấy `jmp rax` hoặc `jmp qword ptr [rax+rcx*8]`, đây là dấu hiệu của một cấu trúc điều khiển phức tạp. IDA thường sẽ cố gắng phân tích "Jump Table" để vẽ ra các mũi tên đến từng `case` của lệnh `switch`.
+*   **Điều kiện nhảy:** Các lệnh `jCC` (Jump if Condition Code) luôn dựa vào kết quả của lệnh `CMP` hoặc `TEST` ngay trước đó.
+
+<tiếp tục>
+
+Dưới đây là nội dung từ trang 236, đi sâu vào cách máy tính mã hóa các lệnh nhảy (Jump Instruction Encodings). Đây là phần cực kỳ quan trọng để bạn hiểu cách bộ xử lý tính toán địa chỉ đích thực tế khi soi mã máy (Opcode) trong IDA Pro.
+
+---
+
+## 3.6.4 Jump Instruction Encodings (Mã hóa lệnh nhảy)
+
+Trong mã máy, các đích đến của lệnh nhảy (jump targets) được mã hóa theo nhiều cách khác nhau. Phổ biến nhất là **PC-relative** (tương đối so với PC).
+
+### 1. Cơ chế PC-relative
+*   **Cách tính:** Mã hóa sự chênh lệch (offset) giữa địa chỉ của **lệnh đích** và địa chỉ của **lệnh ngay sau lệnh nhảy**.
+*   **Kích thước offset:** Thường là 1, 2 hoặc 4 bytes.
+*   **Lợi ích:** Cho phép mã lệnh có thể thực thi ở bất kỳ đâu trong bộ nhớ mà không cần thay đổi (Position-independent code).
+
+### 2. Cơ chế Absolute Addressing (Địa chỉ tuyệt đối)
+*   Sử dụng trực tiếp 4 bytes để chỉ định địa chỉ đích.
+*   Trình liên kết (linker) và trình dịch (assembler) sẽ chọn cách mã hóa phù hợp nhất.
+
+---
+
+### Ví dụ phân tích: File `branch.c`
+
+Hãy xem xét đoạn mã assembly và bản disassembly (nghịch đảo mã) tương ứng:
+
+**Mã Assembly gốc (ATT):**
+```assembly
+1   movq    %rdi, %rax
+2   jmp     .L2
+3 .L3:
+4   sarq    %rax
+5 .L2:
+6   testq   %rax, %rax
+7   jg      .L3
+8   rep; ret
+```
+
+**Bản Disassembly (File vật thể `.o`):**
+
+| Offset | Bytes (Mã máy) | Lệnh (Intel/IDA) | Giải thích PC-relative |
+| :--- | :--- | :--- | :--- |
+| `0:` | `48 89 f8` | `mov rax, rdi` | |
+| `3:` | **`eb 03`** | `jmp 8 <.L2>` | **Nhảy tiến:** Đích là `0x8`. Lệnh sau jmp là `0x5`. Offset = $8 - 5 = \mathbf{3}$. |
+| `5:` | `48 d1 f8` | `sar rax, 1` | |
+| `8:` | `48 85 c0` | `test rax, rax` | |
+| `b:` | **`7f f8`** | `jg 5 <.L3>` | **Nhảy lùi:** Đích là `0x5`. Lệnh sau jg là `0xd`. Offset = $5 - 13 = \mathbf{-8}$ (`f8` trong Hex). |
+| `d:` | `f3 c3` | `rep ret` | |
+
+---
+
+### Aside: Lệnh `rep; ret` có tác dụng gì?
+Trong IDA Pro, đôi khi bạn thấy chuỗi `repz retq` hoặc `rep ret`.
+*   **Nguồn gốc:** Đây là một "mẹo" dành cho các bộ xử lý AMD cũ. Việc nhảy thẳng đến một lệnh `ret` có thể gây chậm nhịp xử lý (branch prediction penalty). 
+*   **Tác dụng:** Lệnh `rep` ở đây đóng vai trò như một lệnh **NOP** (No-operation - không làm gì cả) được chèn vào trước `ret` để tránh lỗi hiệu năng trên.
+*   **Kết luận:** Bạn có thể hoàn toàn bỏ qua tiền tố `rep` này khi phân tích logic, nó không làm thay đổi hành vi của lệnh `ret`.
+
+---
+
+### Sự thay đổi sau khi Liên kết (Linking)
+
+Sau khi các file được liên kết thành chương trình thực thi, các địa chỉ ảo được ấn định nhưng **giá trị mã hóa PC-relative vẫn giữ nguyên**.
+
+**Bản Disassembly của chương trình đã liên kết:**
+```assembly
+4004d0: 48 89 f8        mov    rax, rdi
+4004d3: eb 03           jmp    4004d8 <loop+0x8>
+4004d5: 48 d1 f8        sar    rax, 1
+4004d8: 48 85 c0        test   rax, rax
+4004db: 7f f8           jg     4004d3 <loop+0x5>
+4004dd: f3 c3           repz retq
+```
+
+*   **Quan sát:** Mặc dù địa chỉ bắt đầu là `4004d0`, nhưng các byte mã máy của lệnh nhảy (`eb 03` và `7f f8`) hoàn toàn không đổi so với file `.o`.
+*   **Tính toán lại:** Tại địa chỉ `4004db`, lệnh `jg` nhảy về `4004d3`. Lệnh ngay sau `jg` nằm ở `4004dd`.
+    *   $4004d3 - 4004dd = -10$ (thập phân) $\rightarrow$ À, trong ví dụ này sách tính toán offset dựa trên độ dài lệnh cụ thể. Kết quả cuối cùng vẫn là giá trị bù hai được mã hóa vào lệnh.
+
+---
+
+### IDA Pro Insights (Cách đọc Opcode)
+
+1.  **Nhận diện Jump ngắn:** Nếu bạn thấy Opcode bắt đầu bằng `eb` (JMP), `74` (JZ), `75` (JNZ),... đó là các lệnh nhảy ngắn (Short Jumps) sử dụng offset 1-byte. Khoảng cách nhảy tối đa là khoảng 128 bytes.
+2.  **Tính toán địa chỉ đích:** IDA tự động tính toán địa chỉ đích và hiển thị nhãn hoặc địa chỉ thực cho bạn. Tuy nhiên, khi bạn patch code (sửa mã máy), bạn phải tự tính toán giá trị PC-relative này.
+3.  **Quy tắc ngón tay cái:** 
+    *   Offset dương: Nhảy tiến (xuống dưới).
+    *   Offset âm (bắt đầu bằng `F`, `E`,...): Nhảy lùi (lên trên) - thường thấy trong các vòng lặp.
+
+---
+
+### Practice Problem 3.15: Tính toán địa chỉ đích của lệnh nhảy (PC-relative)
+
+**Quy tắc cốt lõi:**
+Trong cơ chế PC-relative, địa chỉ đích (Target Address) được tính theo công thức:
+$$\text{Target} = \text{Địa chỉ của lệnh NGAY SAU lệnh nhảy} + \text{Giá trị Offset}$$
+
+---
+
+#### Câu A: Nhảy tiến (Positive Offset)
+*   **Mã máy:** `4003fa: 74 02` (`je XXXXXX`)
+*   **Lệnh tiếp theo:** `4003fc: ff d0` (`callq *%rax`)
+*   **Offset:** `02` (hệ 16)
+*   **Tính toán:** $\text{Target} = 0x4003fc + 0x02 = \mathbf{0x4003fe}$
+
+#### Câu B: Nhảy lùi (Negative Offset - 1 byte)
+*   **Mã máy:** `40042f: 74 f4` (`je XXXXXX`)
+*   **Lệnh tiếp theo:** `400431: 5d` (`pop %rbp`)
+*   **Offset:** `f4` (8-bit signed hex).
+    *   *Cách đổi nhanh:* `f4` tương đương với $-12$ trong hệ thập phân (vì $0x100 - 0xf4 = 0x0c = 12$).
+*   **Tính toán:** $\text{Target} = 0x400431 - 0x0c = \mathbf{0x400425}$
+
+#### Câu C: Tìm địa chỉ của lệnh (Reversing the calculation)
+*   **Lệnh nhảy:** `XXXXXX: 77 02` (`ja 400547`)
+*   **Lệnh tiếp theo:** `XXXXXX: 5d` (`pop %rbp`)
+*   **Offset:** `02`. **Đích:** `0x400547`.
+*   **Tính toán:**
+    1.  Địa chỉ lệnh tiếp theo (pop) = $\text{Target} - \text{Offset} = 0x400547 - 0x02 = \mathbf{0x400545}$
+    2.  Địa chỉ lệnh nhảy (ja) = $\text{Địa chỉ pop} - \text{Kích thước lệnh ja} (2 \text{ bytes}) = 0x400545 - 2 = \mathbf{0x400543}$
+
+#### Câu D: Nhảy lùi với Offset 4-byte (Little-endian)
+*   **Mã máy:** `4005e8: e9 73 ff ff ff` (`jmpq XXXXXX`)
+*   **Lệnh tiếp theo:** `4005ed: 90` (`nop`)
+*   **Offset (4 bytes):** `73 ff ff ff`
+    *   *Đọc theo Little-endian:* `0xffffff73` (giá trị bù hai 32-bit).
+    *   *Giá trị thập phân:* $0xffffff73$ tương đương $-141$ ($0x100000000 - 0xffffff73 = 0x8d = 141$).
+*   **Tính toán:** $\text{Target} = 0x4005ed - 141$ (đổi 141 sang hex là $0x8d$).
+    *   $0x4005ed - 0x8d = \mathbf{0x400560}$
+
+---
+
+### IDA Pro Insights (Kỹ năng Patching & Debugging)
+
+1.  **Hex View vs. Disassembly:** IDA Pro luôn tự tính toán các địa chỉ này và hiển thị tên nhãn hoặc địa chỉ thực cho bạn. Tuy nhiên, nếu bạn dùng tính năng **Patch Program** để đổi một lệnh `jz` thành `jnz`, IDA sẽ chỉ cho bạn sửa các byte (Opcode). Việc hiểu cách tính offset giúp bạn biết mình đang nhảy đi đâu.
+2.  **Short Jumps vs. Near Jumps:**
+    *   Câu A, B, C sử dụng lệnh nhảy 2-byte (1 byte Opcode `74`/`77` + 1 byte Offset). Đây là **Short Jump**.
+    *   Câu D sử dụng lệnh 5-byte (Opcode `e9` + 4 bytes Offset). Đây là **Near Jump**, cho phép nhảy đến bất kỳ đâu trong phạm vi $\pm 2GB$.
+3.  **Mẹo tính nhanh offset âm:**
+    *   Trong các file thực thi, offset âm luôn bắt đầu bằng nhiều chữ `f` (ví dụ `f4`, `ffffff73`).
+    *   Khi bạn thấy mũi tên trong IDA nhảy ngược lên phía trên, hãy nhìn vào Hex View, bạn sẽ thấy các byte bắt đầu bằng `f`.
+
+---
+
+## 3.6.5 Implementing Conditional Branches with Conditional Control
+
+Cách phổ biến nhất để chuyển đổi các biểu thức và câu lệnh điều kiện từ C sang mã máy là sử dụng sự kết hợp giữa **nhảy có điều kiện (conditional jumps)** và **nhảy không điều kiện (unconditional jumps)**.
+
+### Ví dụ minh họa: Hàm `absdiff_se`
+Hàm này tính giá trị tuyệt đối của hiệu hai số $x$ và $y$, đồng thời tăng giá trị của một trong hai biến toàn cục `lt_cnt` hoặc `ge_cnt`.
+
+#### 1. Các phiên bản mã nguồn:
+
+<table style="width:100%; border-collapse:collapse; table-layout:fixed; font-family:Arial, sans-serif;">
+  <thead>
+    <tr>
+      <th style="background:#2c3e50; color:#fff; padding:10px; text-align:left;">(a) Original C code</th>
+      <th style="background:#2c3e50; color:#fff; padding:10px; text-align:left;">(b) Equivalent Goto version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="vertical-align:top; border:1px solid #ddd;">
+        <pre style="margin:0; padding:12px; background:#f6f8fa; overflow-x:auto; white-space: pre;">            
+            <code>
+        void absdiff_se(long x, long y) {
+             if (x &lt; y) {
+                 lt_cnt++;
+                 result = y - x;
+             } else {
+                 ge_cnt++;
+                 result = x - y;
+             }
+             return result;
+         }
+            </code>
+           </pre>
+      </td>
+      <td style="vertical-align:top; border:1px solid #ddd;">
+        <pre style="margin:0; padding:12px; background:#f6f8fa; overflow-x:auto; white-space: pre;">
+           <code>
+              <br>
+        void absdiff_se_goto(long x, long y) {
+                if (x &gt;= y)
+                    goto x_ge_y;
+                lt_cnt++;
+                result = y - x;
+                return result;
+            x_ge_y:
+                ge_cnt++;
+                result = x - y;
+                return result;
+            }
+      </code>
+   </pre>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+**Giải thích:** Phiên bản (b) sử dụng lệnh `goto` để mô phỏng chính xác cách mà luồng điều khiển của mã máy vận hành. Việc sử dụng `goto` thường bị coi là phong cách lập trình tồi, nhưng ở đây nó giúp ta hiểu cách trình biên dịch "phẳng hóa" cấu trúc `if-else`.
+
+#### 2. Phân tích mã Assembly (Generated Assembly code):
+*Quy ước: x trong %rdi, y trong %rsi*
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `cmpq %rsi, %rdi` | `cmp rdi, rsi` | So sánh `x` và `y`. |
+| 2 | `jge .L2` | `jge short loc_L2` | **Nếu x >= y**: Nhảy đến nhãn `.L2` (nhánh Else). |
+| 3 | `addq $1, lt_cnt(%rip)` | `add lt_cnt[rip], 1` | `lt_cnt++` (nhánh Then). |
+| 4 | `movq %rsi, %rax` | `mov rax, rsi` | `result = y` |
+| 5 | `subq %rdi, %rax` | `sub rax, rdi` | `result = y - x` |
+| 6 | `ret` | `retn` | Trả về. |
+| 7 | `.L2:` | `loc_L2:` | Nhãn nhánh Else. |
+| 8 | `addq $1, ge_cnt(%rip)` | `add ge_cnt[rip], 1` | `ge_cnt++` |
+| 9 | `movq %rdi, %rax` | `mov rax, rdi` | `result = x` |
+| 10 | `subq %rsi, %rax` | `sub rax, rsi` | `result = x - y` |
+| 11 | `ret` | `retn` | Trả về. |
+
+---
+
+### Aside: Mô tả mã máy bằng ngôn ngữ C
+Trình biên dịch tạo ra các khối mã riêng biệt cho nhánh "then" và nhánh "else". Nó chèn các lệnh nhảy có điều kiện và không điều kiện để đảm bảo chỉ có khối mã đúng được thực thi. Việc tác giả sử dụng phiên bản `goto` là để tạo ra một cầu nối logic giúp người học dễ dàng ánh xạ (mapping) giữa mã nguồn bậc cao và mã máy cấp thấp.
+
+---
+
+### Khuôn mẫu chung (Template) cho cấu trúc If-Else
+
+Dạng tổng quát của một câu lệnh `if-else` trong C là:
+```c
+if (test-expr)
+    then-statement
+else
+    else-statement
+```
+
+Trình biên dịch thường chuyển đổi cấu trúc này sang dạng mã máy tương đương với logic `goto` sau:
+
+```c
+    t = test-expr;
+    if (!t) 
+        goto false;
+    then-statement
+    goto done;
+false:
+    else-statement
+done:
+```
+
+**Phân tích luồng thực thi:**
+1.  **`test-expr`**: Được tính toán và thiết lập các mã điều kiện (flag).
+2.  **`if (!t) goto false`**: Nếu điều kiện sai, bộ xử lý nhảy qua nhánh `then` để thực hiện nhánh `else`.
+3.  **`then-statement`**: Được thực thi nếu điều kiện đúng.
+4.  **`goto done`**: Sau khi xong nhánh `then`, phải có một lệnh nhảy không điều kiện để bỏ qua nhánh `else`.
+
+---
+
+### IDA Pro Insights (Góc nhìn sơ đồ khối)
+
+*   **Cấu trúc hình thoi:** Trong Graph View của IDA, cấu trúc `if-else` thường tạo thành một hình thoi hoặc hình chữ Y.
+*   **Mũi tên đỏ (False/Jump):** Tương ứng với lệnh `jge .L2` ở dòng 2. Nếu điều kiện so sánh `x < y` bị sai (tức là $x \geq y$), IDA sẽ vẽ mũi tên màu đỏ dẫn bạn đến khối lệnh `loc_L2`.
+*   **Mũi tên xanh lá (True/Fall-through):** Nếu điều kiện đúng, chương trình chạy tiếp xuống dòng lệnh ngay dưới (`lt_cnt++`).
+*   **Điểm hội tụ (Done):** Cả hai nhánh cuối cùng thường sẽ hội tụ về một lệnh `ret` hoặc một khối lệnh chung phía sau (nhãn `done`). Tuy nhiên, trong ví dụ `absdiff_se`, trình biên dịch tối ưu bằng cách đặt lệnh `ret` ở cuối mỗi nhánh để thoát hàm nhanh nhất có thể.
+
+---
+*(Nội dung lý thuyết kết thúc tại đây. Tôi đã lược bỏ các bài tập Practice Problem 3.16 và 3.17 theo yêu cầu của bạn).*
+
+<tạm dừng>

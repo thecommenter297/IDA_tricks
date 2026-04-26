@@ -1935,6 +1935,9 @@ Có hai lớp lệnh (Hình 3.13) chuyên dùng để thiết lập mã điều 
 
 #### Hình 3.13: Lệnh so sánh và kiểm tra
 
+<img width="821" height="407" alt="image" src="https://github.com/user-attachments/assets/0c824e20-3472-4cab-9407-1034d29c6951" />
+
+
 | Lệnh (ATT) | Lệnh (Intel/IDA) | Dựa trên phép toán | Mô tả |
 | :--- | :--- | :--- | :--- |
 | **CMP** $S_1, S_2$ | `cmp S2, S1` | $S_2 - S_1$ | **So sánh**: Giống lệnh `SUB` nhưng chỉ cập nhật flag, không lưu kết quả trừ. |

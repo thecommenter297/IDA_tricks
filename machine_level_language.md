@@ -1568,7 +1568,7 @@ short arith3(short x, short y, short z) {
 
 | Dòng | Lệnh Assembly (Sách) | Lệnh Intel (IDA Pro) | Phân tích logic |
 | :--- | :--- | :--- | :--- |
-| 1 | `orq %rsi, %rdx` | `or rdx, rsi` | `rdx = z | y` (Đây là `p1`) |
+| 1 | `orq %rsi, %rdx` | `or rdx, rsi` | `rdx = z \| y` (Đây là `p1`) |
 | 2 | `sarq $9, %rdx` | `sar rdx, 9` | `rdx = p1 >> 9` (Đây là `p2`) |
 | 3 | `notq %rdx` | `not rdx` | `rdx = ~p2` (Đây là `p3`) |
 | 4 | `movq %rdx, %rax` | `mov rax, rdx` | Chuẩn bị trả về giá trị `p3` |

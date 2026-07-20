@@ -4070,5 +4070,797 @@ Trong IDA Pro, việc nhận diện bảng nhảy là chìa khóa để hiểu c
 3.  **Nhận diện Fall-through:** Trong chế độ Graph View của IDA, nếu bạn thấy một khối lệnh có **mũi tên xanh dương** chạy thẳng xuống khối ngay dưới mà không có bất kỳ lệnh nhảy (`jmp`, `jz`...) nào ở cuối, đó chắc chắn là một lỗi thiếu `break` hoặc logic fall-through có chủ đích.
 4.  **Sự thông minh của IDA:** IDA thường tạo ra một bảng chú thích (comment) màu xanh lá cây ngay phía sau lệnh nhảy gián tiếp, liệt kê toàn bộ các `case` mà bảng này hỗ trợ, giúp bạn không cần phải tự dò từng địa chỉ trong phân vùng dữ liệu.
 
+<tiếp tục>
+
+Dưới đây là lời giải chi tiết cho **Practice Problem 3.30**. Bài tập này yêu cầu bạn suy luận ngược từ cấu trúc Jump Table (Bảng nhảy) để tìm ra các giá trị `case` và các nhãn trùng nhau trong mã nguồn C. Đây là kỹ năng tối quan trọng khi bạn đối mặt với một hàm `switch` khổng lồ trong IDA Pro.
+
+---
+
+### Practice Problem 3.30: Giải mã Bảng nhảy và Giá trị Case
+
+**Mã nguồn C (Khung xương):**
+```c
+void switch2(short x, short *dest) {
+    short val = 0;
+    switch (x) {
+        /* Thân của câu lệnh switch đã bị lược bỏ */
+    }
+    *dest = val;
+}
+```
+
+#### 1. Phân tích mã Assembly khởi đầu:
+*Quy ước: x ban đầu nằm trong %rdi*
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `addq $2, %rdi` | `add rdi, 2` | **Dịch dải:** `index = x + 2`. |
+| 2 | `cmpq $8, %rdi` | `cmp rdi, 8` | So sánh chỉ số với hằng số 8. |
+| 3 | `ja .L2` | `ja short loc_default` | Nếu `index > 8` (không dấu), nhảy tới `default`. |
+| 4 | `jmp *.L4(,%rdi,8)` | `jmp qword ptr [L4 + rdi*8]` | Nhảy gián tiếp qua bảng nhảy `.L4`. |
+
+---
+
+#### 2. Phân tích Bảng nhảy (Jump Table `.L4`):
+
+Dựa vào lệnh `addq $2, %rdi`, ta biết công thức tính chỉ số là: $index = x + 2 \Rightarrow x = index - 2$.
+Bảng có 9 mục (từ chỉ số 0 đến 8):
+
+| Index | Thanh ghi `%rdi` | Giá trị `x` gốc ($index - 2$) | Địa chỉ nhảy tới | Phân loại |
+| :--- | :--- | :--- | :--- | :--- |
+| 0 | 0 | **-2** | `.L9` | Case -2 |
+| 1 | 1 | **-1** | `.L5` | Case -1 |
+| 2 | 2 | **0** | `.L6` | Case 0 |
+| 3 | 3 | **1** | `.L7` | Case 1 |
+| 4 | 4 | **2** | `.L2` | Mất (Default) |
+| 5 | 5 | **3** | `.L7` | Case 3 |
+| 6 | 6 | **4** | `.L8` | Case 4 |
+| 7 | 7 | **5** | `.L2` | Mất (Default) |
+| 8 | 8 | **6** | `.L5` | Case 6 |
+
+---
+
+### Trả lời câu hỏi:
+
+**A. Các giá trị của nhãn case trong câu lệnh switch là gì?**
+Dựa vào bảng trên, các giá trị `x` có nhãn xử lý riêng (không phải nhảy tới `.L2` - default) là:
+**-2, -1, 0, 1, 3, 4, 6**.
+
+**B. Những case nào có nhiều nhãn (multiple labels) trong mã C?**
+Những giá trị `x` khác nhau nhưng nhảy tới cùng một nhãn assembly:
+*   Nhãn **`.L5`**: Ứng với các case **-1** và **6**.
+*   Nhãn **`.L7`**: Ứng với các case **1** và **3**.
+
+---
+
+### IDA Pro Insights (Cách đọc logic Switch-case)
+
+1.  **Xác định dải giá trị (Range):** 
+    *   Lệnh `add` ngay đầu cho bạn biết giá trị case nhỏ nhất (x + 2 = 0 $\rightarrow$ x_min = -2).
+    *   Lệnh `cmp` cho bạn biết độ rộng của dải (9 giá trị: từ 0 đến 8).
+    *   Trong IDA, bảng chú thích switch sẽ ghi rõ: `Cases -2 to 6`.
+2.  **Nhận diện Case bị khuyết:** 
+    *   Trong bảng nhảy trên, tại index 4 và 7 (tương ứng case 2 và 5), địa chỉ nhảy là `.L2`. Vì `.L2` cũng là địa chỉ của nhánh `default` (theo lệnh `ja .L2`), ta kết luận trong mã C gốc **không có** `case 2` và `case 5`.
+3.  **Nhãn trùng lặp:** 
+    *   Khi bạn thấy IDA vẽ hai mũi tên từ cùng một bảng nhảy dẫn đến cùng một khối lệnh (Basic Block), đó là biểu hiện của mã C dạng:
+      ```c
+      case 1:
+      case 3:
+          /* chung code xử lý */
+          break;
+      ```
+4.  **Kiểu dữ liệu Index:** 
+    *   Lưu ý lệnh `addq` và `cmpq` (8-byte) được dùng dù `x` là `short` (2-byte). Trình biên dịch thường mở rộng kích thước biến index lên 64-bit để thực hiện phép tính địa chỉ `[base + index * 8]` một cách an toàn.
+
+<tiếp tục>
+
+Dưới đây là lời giải chi tiết cho **Practice Problem 3.31**. Đây là một bài tập tổng hợp đòi hỏi bạn phải ánh xạ chính xác giữa các thanh ghi tham số, cấu trúc bảng nhảy (Jump Table) và logic của các khối mã xử lý.
+
+---
+
+### Practice Problem 3.31: Hoàn thiện hàm `switcher` từ mã Assembly
+
+**Đề bài:** Dựa vào mã Assembly và bảng nhảy (Figure 3.24), hãy điền các giá trị và biểu thức còn thiếu vào mã nguồn C.
+
+#### 1. Ánh xạ tham số (Register Mapping)
+Theo chuẩn System V ABI cho x86-64, các tham số được ánh xạ như sau:
+*   `a` (1st param): **`%rdi`**
+*   `b` (2nd param): **`%rsi`**
+*   `c` (3rd param): **`%rdx`**
+*   `dest` (4th param): **`%rcx`**
+
+*Lưu ý:* Mã máy sử dụng `%rdi` để lưu `val` sau khi đã thực hiện xong lệnh `switch(a)`.
+
+---
+
+#### 2. Giải mã Bảng nhảy (Jump Table `.L4`)
+Lệnh `jmp *.L4(,%rdi,8)` nhảy dựa trên giá trị của `a` (0 đến 7):
+
+| Chỉ số (a) | Nhãn đích | Khối mã xử lý | Phân tích logic |
+| :--- | :--- | :--- | :--- |
+| **0** | `.L3` | **Case B** | `val = c + 112` |
+| **1** | `.L2` | **Default** | `val = b` |
+| **2** | `.L5` | **Case C/D** | `val = (c + b) << 2` |
+| **3** | `.L2` | **Default** | `val = b` |
+| **4** | `.L6` | **Case E** | `val = a` (nhảy thẳng tới điểm lưu kết quả) |
+| **5** | `.L7` | **Case A** | `c = b ^ 15`, trôi xuống **Case B** |
+| **6** | `.L2` | **Default** | `val = b` |
+| **7** | `.L5` | **Case C/D** | `val = (c + b) << 2` |
+
+---
+
+#### 3. Phân tích các khối mã (Code Blocks)
+
+*   **Khối `.L7` (Case A):**
+    *   `xorq $15, %rsi`: `b = b ^ 15`
+    *   `movq %rsi, %rdx`: `c = b`
+    *   *Fall through* (trôi xuống `.L3`).
+*   **Khối `.L3` (Case B):**
+    *   `leaq 112(%rdx), %rdi`: `val = c + 112`
+    *   `jmp .L6`: `break;`
+*   **Khối `.L5` (Case C & D):**
+    *   `leaq (%rdx,%rsi), %rdi`: `temp = c + b`
+    *   `salq $2, %rdi`: `val = temp << 2` (tương đương `(c + b) * 4`)
+    *   `jmp .L6`: `break;`
+*   **Khối `.L2` (Default):**
+    *   `movq %rsi, %rdi`: `val = b`
+    *   *Trôi xuống `.L6`*
+*   **Khối `.L6` (Kết thúc):**
+    *   `movq %rdi, (%rcx)`: `*dest = val`
+
+---
+
+### Lời giải mã C hoàn chỉnh
+
+```c
+void switcher(long a, long b, long c, long *dest)
+{
+    long val;
+    switch(a) {
+        case 5:              /* Case A */
+            c = b ^ 15;
+            /* Fall through */
+        case 0:              /* Case B */
+            val = c + 112;
+            break;
+        case 2:              /* Case C */
+        case 7:              /* Case D */
+            val = (c + b) * 4;
+            break;
+        case 4:              /* Case E */
+            val = a;
+            break;
+        default:
+            val = b;
+    }
+    *dest = val;
+}
+```
+
+---
+
+### IDA Pro Insights (Kỹ năng Reverse Switch-case)
+
+1.  **Xác định biến Switch:** IDA sẽ hiển thị `jmp ds:off_XXXX[rdi*8]`. Nhìn vào thanh ghi nhân với 8 (`rdi`), bạn biết ngay đó là biến nằm trong `switch()`.
+2.  **Nhận diện Fall-through:** 
+    *   Trong mã Assembly trên, sau nhãn `.L7` **không có** lệnh `jmp`. 
+    *   Trong IDA Graph View, bạn sẽ thấy một mũi tên chạy thẳng từ khối `.L7` xuống khối `.L3`. Đây là bằng chứng cho việc Case 5 trôi vào Case 0.
+3.  **Tối ưu hóa Case E:** 
+    *   Case 4 nhảy thẳng đến `.L6`. Tại `.L6`, lệnh `movq %rdi, (%rcx)` được thực thi. Vì lúc này `%rdi` vẫn đang giữ giá trị gốc của `a` (là 4), nên thực tế `val = 4`. 
+    *   Trong IDA, điều này thường làm code rẽ nhánh trông rất gọn vì một `case` không cần khối xử lý riêng.
+4.  **Mẹo kiểm tra nhanh:** Khi `a > 7` (lệnh `ja .L2` ở dòng 3), chương trình nhảy tới `.L2`. Vì vậy các chỉ số 1, 3, 6 (trỏ tới `.L2` trong bảng) và các giá trị nằm ngoài dải 0-7 đều thuộc về `default`.
+
+<tiếp tục>
+
+Dưới đây là phần nội dung từ trang 267, bắt đầu mục **3.7 Procedures** (Thủ tục/Hàm). Đây là phần kiến thức nền tảng để bạn hiểu cách IDA Pro phân tích các lời gọi hàm, quản lý tham số và Stack Frame.
+
+---
+
+## 3.7 Procedures (Thủ tục)
+
+Thủ tục (Procedures) là một sự trừu tượng hóa then chốt trong phần mềm. Chúng cung cấp một cách để đóng gói mã thực thi một chức năng cụ thể với một tập hợp các đối số (arguments) và một giá trị trả về (return value) tùy chọn. Hàm này sau đó có thể được gọi từ nhiều điểm khác nhau trong chương trình. 
+
+Phần mềm được thiết kế tốt sử dụng các thủ tục như một cơ chế che giấu thông tin (abstraction mechanism), ẩn đi chi tiết cài đặt của một hành động cụ thể trong khi cung cấp một định nghĩa giao diện rõ ràng và ngắn gọn về những giá trị nào sẽ được tính toán và những tác động nào mà thủ tục đó sẽ gây ra đối với trạng thái chương trình. 
+
+Thủ tục xuất hiện dưới nhiều tên gọi khác nhau trong các ngôn ngữ lập trình: **functions** (hàm), **methods** (phương thức), **subroutines** (hàm con), **handlers** (trình xử lý)... nhưng chúng đều chia sẻ một tập hợp các đặc điểm chung.
+
+---
+
+### Các cơ chế hỗ trợ thủ tục mức máy
+
+Giả sử thủ tục **P** gọi thủ tục **Q**, và **Q** thực thi rồi trả về lại cho **P**. Các hành động này liên quan đến một hoặc nhiều cơ chế sau:
+
+1.  **Passing control (Chuyển giao điều khiển):** Thanh ghi con trỏ lệnh (Program Counter - `%rip`) phải được thiết lập thành địa chỉ bắt đầu của mã lệnh thủ tục **Q** khi bắt đầu gọi, và sau đó phải được thiết lập lại thành địa chỉ của lệnh ngay sau lệnh gọi trong **P** khi quay trở về.
+2.  **Passing data (Truyền dữ liệu):** **P** phải có khả năng cung cấp một hoặc nhiều tham số cho **Q**, và **Q** phải có khả năng trả về một giá trị cho **P**.
+3.  **Allocating and deallocating memory (Cấp phát và giải phóng bộ nhớ):** **Q** có thể cần cấp phát không gian cho các biến cục bộ khi bắt đầu thực thi và giải phóng không gian đó trước khi trả về.
+
+---
+
+### Chiến lược thực hiện trong x86-64
+
+Việc triển khai các thủ tục trong x86-64 bao gồm sự kết hợp của các **chỉ thị đặc biệt** và một tập hợp các **quy ước (conventions)** về cách sử dụng tài nguyên máy (như thanh ghi và bộ nhớ chương trình). 
+
+*   **Sự tối ưu:** Các nhà thiết kế đã nỗ lực rất lớn để giảm thiểu chi phí (overhead) phát sinh khi gọi một thủ tục. 
+*   **Chiến lược tối giản:** x86-64 áp dụng chiến lược tối giản, chỉ triển khai các cơ chế thực sự cần thiết cho từng thủ tục cụ thể. 
+
+Trong các phần tiếp theo, chúng ta sẽ xây dựng các cơ chế khác nhau từng bước một: đầu tiên mô tả việc điều khiển luồng (control), sau đó là truyền dữ liệu (data passing), và cuối cùng là quản lý bộ nhớ (memory management).
+
+---
+
+### IDA Pro Insights (Tư duy về Procedures)
+
+Khi bạn mở một file thực thi trong IDA Pro, hầu hết thời gian bạn sẽ làm việc với các "Procedures" này:
+
+*   **Nhận diện hàm:** IDA tự động phân tích các nhãn như `sub_401234` hoặc sử dụng tên thực (như `main`, `printf`) nếu có thông tin ký hiệu (symbols).
+*   **Ba cơ chế trong IDA:**
+    1.  **Control:** Bạn sẽ thấy lệnh `call` để gọi và `ret` để trả về.
+    2.  **Data:** Bạn sẽ thấy dữ liệu được nạp vào `%rdi`, `%rsi`... trước lệnh `call` (tham số) và kết quả nằm trong `%rax` sau lệnh `call`.
+    3.  **Memory:** Bạn sẽ thấy các lệnh như `sub rsp, 20h` ở đầu hàm để tạo "Stack Frame" cho biến cục bộ.
+
+<tiếp tục>
+
+Dưới đây là phần nội dung chi tiết về **3.7.1 The Run-Time Stack (Ngăn xếp thực thi)** từ các ảnh bạn cung cấp. Đây là phần kiến thức tối quan trọng để hiểu cách IDA Pro xác định các biến cục bộ và tham số nằm trên bộ nhớ.
+
+---
+
+## 3.7.1 The Run-Time Stack (Ngăn xếp thực thi)
+
+Một đặc điểm then chốt của cơ chế gọi hàm trong C (và hầu hết các ngôn ngữ khác) là việc sử dụng cấu trúc dữ liệu Ngăn xếp (Stack) để quản lý bộ nhớ theo nguyên tắc **Vào sau, Ra trước (LIFO)**.
+
+### Cơ chế hoạt động cơ bản
+Giả sử thủ tục **P** gọi thủ tục **Q**:
+*   Trong khi **Q** đang chạy, **P** (và các hàm đã gọi P trước đó) tạm thời bị đình chỉ.
+*   **Q** chỉ cần khả năng cấp phát không gian mới cho các biến cục bộ của nó hoặc để thiết lập lời gọi đến một thủ tục khác.
+*   Khi **Q** trả về, toàn bộ không gian bộ nhớ mà nó đã cấp phát có thể được giải phóng.
+
+### Quản lý Ngăn xếp trong x86-64
+*   **Hướng phát triển:** Ngăn xếp phát triển về phía **địa chỉ thấp hơn**.
+*   **Thanh ghi `%rsp`:** Luôn trỏ vào phần tử ở đỉnh ngăn xếp (địa chỉ thấp nhất).
+*   **Thao tác dữ liệu:** Sử dụng lệnh `pushq` (đẩy vào) và `popq` (lấy ra).
+*   **Cấp phát/Giải phóng nhanh:** 
+    *   Để cấp phát không gian cho dữ liệu (không cần khởi tạo giá trị): Chỉ cần **giảm** `%rsp` một lượng tương ứng.
+    *   Để giải phóng: Chỉ cần **tăng** `%rsp`.
+
+---
+
+### Stack Frame (Khung ngăn xếp)
+
+Khi một thủ tục x86-64 yêu cầu không gian lưu trữ vượt quá những gì các thanh ghi có thể chứa, nó sẽ cấp phát không gian trên ngăn xếp. Vùng không gian này được gọi là **Stack Frame**.
+
+#### Hình 3.25: Cấu trúc tổng quát của một Stack Frame
+
+Hình vẽ mô tả cách phân chia ngăn xếp thành các "khung" cho từng hàm:
+
+<img width="924" height="851" alt="image" src="https://github.com/user-attachments/assets/062056b7-1053-49b6-9807-c403cc897089" />
+
+---
+
+### Các quy tắc đặc thù trong x86-64
+
+1.  **Truyền tham số:** x86-64 có thể truyền tối đa 6 giá trị số nguyên (bao gồm cả con trỏ) qua thanh ghi. Nếu hàm **Q** yêu cầu nhiều hơn 6 tham số, các tham số từ thứ 7 trở đi sẽ được **P** lưu vào khung ngăn xếp của chính nó trước khi gọi **Q**.
+2.  **Tính hiệu quả:** Thủ tục chỉ cấp phát những phần của khung ngăn xếp mà chúng thực sự cần. 
+3.  **Leaf Procedures (Thủ tục lá):** 
+    *   Đây là các hàm không gọi thêm bất kỳ hàm nào khác. 
+    *   Nếu tất cả biến cục bộ của hàm này có thể nằm gọn trong các thanh ghi, nó **không cần cấp phát stack frame**.
+    *   Tất cả các ví dụ hàm chúng ta đã xem xét từ đầu chương 3 đến giờ đều là các thủ tục lá và không yêu cầu stack frame.
+
+---
+
+### IDA Pro Insights (Kỹ năng đọc Stack Frame)
+
+Khi bạn nhìn vào một hàm trong IDA Pro, bạn sẽ thấy cách nó hiện thực hóa Hình 3.25:
+
+1.  **Prologue (Đoạn đầu hàm):**
+    *   `push rbp` và `mov rbp, rsp`: Thiết lập Frame Pointer (nếu không được tối ưu hóa).
+    *   `sub rsp, 40h`: Lệnh này chính là thao tác "mở rộng ranh giới ngăn xếp" để tạo không gian cho **Local variables** và **Argument build area**.
+2.  **Định danh biến:** 
+    *   IDA sẽ ký hiệu các biến có offset dương từ `%rbp` (hoặc phía trên `%rsp` sau khi `sub`) là **`arg_X`**. Đây chính là các tham số từ thứ 7 trở đi nằm trong khung của hàm gọi.
+    *   Các biến có offset âm từ `%rbp` (hoặc nằm ngay tại `%rsp`) là **`var_X`**. Đây chính là vùng **Local variables**.
+3.  **Return Address:** IDA luôn hiểu ngầm có địa chỉ trả về nằm ngay phía trên vùng biến cục bộ. Nếu bạn thấy một hàm truy cập vào `[rsp + <kích_thước_frame>]`, nó đang chạm vào địa chỉ trả về hoặc tham số trên stack.
+
+---
+
+<tiếp tục>
+
+Dưới đây là phần nội dung từ trang 270, minh họa trực quan cách lệnh `call` và `ret` điều khiển luồng thực thi thông qua Ngăn xếp và Thanh ghi con trỏ lệnh (`%rip`).
+
+---
+
+### Hình 3.26: Minh họa hoạt động của lệnh Call và Ret
+
+Sơ đồ này mô tả quá trình chuyển giao điều khiển giữa hàm `main` và hàm `multstore`.
+
+1.  **Trạng thái (a) - Đang thực thi `call`:**
+    *   Thanh ghi `%rip` đang ở địa chỉ `0x400563` (lệnh `call`).
+    *   Thanh ghi `%rsp` đang ở `0x7fffffffe840`.
+2.  **Trạng thái (b) - Sau khi `call` (vừa vào hàm mới):**
+    *   Lệnh `call` đã đẩy **địa chỉ trả về** `0x400568` vào ngăn xếp.
+    *   Thanh ghi `%rsp` giảm xuống `0x7fffffffe838` (bớt 8 bytes).
+    *   Thanh ghi `%rip` được thiết lập thành `0x400540` (điểm bắt đầu của `multstore`).
+3.  **Trạng thái (c) - Sau khi `ret` (quay về hàm gọi):**
+    *   Lệnh `ret` đã lấy (pop) giá trị `0x400568` từ đỉnh ngăn xếp và nạp vào `%rip`.
+    *   Thanh ghi `%rsp` tăng lại lên `0x7fffffffe840`.
+    *   Chương trình tiếp tục thực thi lệnh ngay sau `call`.
+
+---
+
+### Phân tích mã Assembly trích dẫn
+
+Dưới đây là đoạn mã nghịch đảo từ hai hàm liên quan:
+
+| Địa chỉ | Mã máy (Bytes) | ATT Syntax (Sách) | Intel Syntax (IDA Pro) | Ghi chú logic |
+| :--- | :--- | :--- | :--- | :--- |
+| **Hàm multstore** | | | | |
+| `400540:` | `53` | `push %rbx` | `push rbx` | Bắt đầu hàm. |
+| ... | ... | ... | ... | ... |
+| `40054d:` | `c3` | **`retq`** | **`retn`** | Trả về hàm gọi. |
+| **Hàm main** | | | | |
+| `400563:` | `e8 d8 ff ff ff` | **`callq 400540`** | **`call sub_400540`** | Gọi hàm `multstore`. |
+| `400568:` | `48 8b 54 24 08` | `mov 0x8(%rsp), %rdx` | `mov rdx, [rsp+8]` | **Địa chỉ trả về**. |
+
+---
+
+### Cơ chế kỹ thuật chi tiết
+
+1.  **Lệnh `callq 400540`:**
+    *   Địa chỉ của chính lệnh này là `0x400563`.
+    *   Địa chỉ của lệnh tiếp theo ngay sau nó là **`0x400568`**. 
+    *   Khi thực thi, bộ xử lý đẩy `0x400568` vào Stack và nhảy tới nhãn `<multstore>`.
+2.  **Quá trình thực thi hàm được gọi:**
+    *   Hàm `multstore` chạy cho đến khi gặp lệnh `retq` tại địa chỉ `0x40054d`.
+3.  **Lệnh `retq`:**
+    *   Nó đọc giá trị ở đỉnh Stack (lúc này là `0x400568`) và nạp vào thanh ghi `%rip`.
+    *   Việc thực thi của hàm `main` được tiếp tục chính xác tại vị trí sau lệnh gọi (dòng 6).
+
+---
+
+### IDA Pro Insights (Cách quan sát lời gọi hàm)
+
+1.  **Nhận diện địa chỉ trả về:** Trong IDA Debugger, khi bạn bước vào (Step Into - F7) một lệnh `call`, hãy nhìn ngay vào thanh ghi `RSP`. Giá trị tại địa chỉ mà `RSP` trỏ tới chính là nơi chương trình sẽ quay về sau khi hàm kết thúc.
+2.  **Tên hàm (Labels):** 
+    *   Sách ghi: `callq 400540 <multstore>`.
+    *   IDA Pro thường hiển thị: `call multstore` (nếu có symbols) hoặc `call sub_400540` (nếu không có). 
+    *   Bạn có thể nhấn đúp chuột vào tên hàm trong IDA để nhảy tới định nghĩa của hàm đó.
+3.  **Opcode của Call:** Lưu ý mã máy `e8 d8 ff ff ff`. 
+    *   `e8` là opcode của lệnh `call` tương đối (PC-relative).
+    *   `d8 ff ff ff` là giá trị offset bù hai (số âm), chỉ ra khoảng cách từ lệnh hiện tại tới hàm đích. IDA tự động tính toán khoảng cách này để hiển thị địa chỉ thực `400540`.
 
 
+<tiếp tục>
+
+Dưới đây là phần nội dung từ trang 271 và phần text giải thích đi kèm, tập trung vào việc phân tích luồng thực thi chi tiết của các lời gọi hàm lồng nhau. Đây là ví dụ hoàn hảo để bạn hình dung cách CPU và Ngăn xếp phối hợp để không bị "lạc đường" khi nhảy qua lại giữa các hàm.
+
+---
+
+### Hình 3.27: Phân tích luồng thực thi chi tiết (Execution Trace)
+
+Ví dụ này gồm hai hàm: `top` và `leaf`. Hàm `main` gọi `top`, sau đó `top` gọi `leaf`.
+
+#### (a) Mã Assembly của các hàm (ATT vs Intel/IDA Pro)
+
+| Nhãn | Địa chỉ | ATT Syntax (Sách) | Intel Syntax (IDA Pro) | Logic C tương ứng |
+| :--- | :--- | :--- | :--- | :--- |
+| **Hàm leaf** | | | | |
+| `L1` | `400540` | `leaq 0x2(%rdi), %rax` | `lea rax, [rdi+2]` | `return y + 2` |
+| `L2` | `400544` | `retq` | `retn` | |
+| **Hàm top** | | | | |
+| `T1` | `400545` | `subq $0x5, %rdi` | `sub rdi, 5` | `x - 5` |
+| `T2` | `400549` | `callq 400540 <leaf>` | `call leaf` | `leaf(x - 5)` |
+| `T3` | `40054e` | `addq %rax, %rax` | `add rax, rax` | `double result` |
+| `T4` | `400551` | `retq` | `retn` | |
+| **Hàm main** | | | | |
+| `M1` | `40055b` | `callq 400545 <top>` | `call top` | `top(100)` |
+| `M2` | `400560` | `movq %rax, %rdx` | `mov rdx, rax` | **Địa chỉ trả về** |
+
+---
+
+#### (b) Bảng truy vết thực thi (Execution Trace)
+
+Bảng này mô tả trạng thái của các thanh ghi và ngăn xếp **trước khi** mỗi lệnh được thực thi:
+
+| Nhãn | PC (RIP) | Lệnh thực thi | %rdi | %rax | %rsp | *%rsp (Đỉnh Stack) | Mô tả |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **M1** | `40055b` | `call top` | 100 | — | `...e820` | — | Gọi `top(100)` |
+| **T1** | `400545` | `sub $5, %rdi` | 100 | — | `...e818` | `400560` | Vào `top`, Stack lưu `M2` |
+| **T2** | `400549` | `call leaf` | 95 | — | `...e818` | `400560` | Chuẩn bị gọi `leaf(95)` |
+| **L1** | `400540` | `lea 2(%rdi), %rax` | 95 | — | `...e810` | `40054e` | Vào `leaf`, Stack lưu `T3` |
+| **L2** | `400544` | `retq` | 95 | **97** | `...e810` | `40054e` | `leaf` xong, rax = 97 |
+| **T3** | `40054e` | `add %rax, %rax` | — | 97 | `...e818` | `400560` | Về `top`, PC lấy từ Stack |
+| **T4** | `400551` | `retq` | — | **194** | `...e818` | `400560` | `top` xong, rax = 194 |
+| **M2** | `400560` | `mov %rax, %rdx` | — | 194 | `...e820` | — | Về `main`, Stack sạch |
+
+---
+
+### Phân tích vai trò của Ngăn xếp (Stack)
+
+Nội dung bảng truy vết trên chứng minh vai trò sống còn của ngăn xếp thực thi (run-time stack):
+
+1.  **Lưu trữ địa chỉ trả về (Return Address):**
+    *   Khi lệnh `L2` (trong `leaf`) thực thi, nó lấy (pop) địa chỉ `0x40054e` từ đỉnh ngăn xếp và nạp vào `%rip`. Nhờ đó, chương trình biết đường quay lại lệnh `T3` của hàm `top`.
+    *   Khi lệnh `T4` (trong `top`) thực thi, nó lấy địa chỉ `0x400560` để quay về lệnh `M2` của hàm `main`.
+2.  **Tính đối xứng:** 
+    *   Bạn có thể thấy thanh ghi `%rsp` giảm xuống khi gọi hàm (`call`) và tăng lên chính xác về giá trị cũ khi trả về (`ret`).
+    *   Tại nhãn **M2**, con trỏ ngăn xếp đã được khôi phục về `...e820`, hoàn toàn sạch sẽ như trước khi gọi `top`.
+3.  **Cơ chế LIFO:** Các địa chỉ trả về được đẩy vào và lấy ra theo đúng thứ tự "Vào sau, Ra trước", giúp hỗ trợ các lời gọi hàm lồng nhau một cách tự nhiên.
+
+---
+
+### IDA Pro Insights (Kỹ năng Debug hàm lồng nhau)
+
+Khi bạn sử dụng trình Debugger trong IDA Pro (như Local Windows Debugger hoặc GDB):
+
+*   **Step Into (F7) vs Step Over (F8):** 
+    *   Tại lệnh `call top` (M1), nếu nhấn **F7**, IDA sẽ đưa bạn tới địa chỉ `400545` (T1). 
+    *   Nếu nhấn **F8**, IDA sẽ chạy toàn bộ hàm `top` và dừng lại ở `400560` (M2).
+*   **Cửa sổ Call Stack:** Trong lúc đang dừng ở hàm `leaf`, hãy mở cửa sổ **Call Stack**. Bạn sẽ thấy IDA liệt kê:
+    1. `leaf` (đang chạy)
+    2. `top` (đang đợi)
+    3. `main` (đang đợi)
+    *   Danh sách này thực chất được IDA trích xuất bằng cách đọc các địa chỉ trả về đang nằm trên Stack (`0x40054e` và `0x400560`).
+*   **Mũi tên PC:** Trong Graph View, mũi tên màu vàng chỉ vào lệnh sắp thực thi chính là giá trị hiện tại của thanh ghi `%rip`.
+
+<tiếp tục>
+
+Dưới đây là lời giải chi tiết cho **Practice Problem 3.32**. Bài tập này yêu cầu bạn thực hiện truy vết (trace) trạng thái hệ thống khi có nhiều lời gọi hàm phức tạp hơn, giúp bạn rèn luyện khả năng quan sát sự thay đổi của thanh ghi tham số (`%rdi`, `%rsi`) và địa chỉ trả về trên Stack.
+
+---
+
+### Practice Problem 3.32: Truy vết thực thi lời gọi hàm lồng nhau
+
+**Mã Assembly của các hàm:**
+
+| Nhãn | Địa chỉ | Lệnh (Intel/IDA Pro) | Logic C tương ứng |
+| :--- | :--- | :--- | :--- |
+| **Hàm `last`** | | `u` in `%rdi`, `v` in `%rsi` | `long last(long u, long v)` |
+| `L1` | `400540` | `mov rax, rdi` | `rax = u` |
+| `L2` | `400543` | `imul rax, rsi` | `rax = u * v` |
+| `L3` | `400547` | `retn` | `return rax` |
+| **Hàm `first`** | | `x` in `%rdi` | `long first(long x)` |
+| `F1` | `400548` | `lea rsi, [rdi+1]` | `arg2 = x + 1` |
+| `F2` | `40054c` | `sub rdi, 1` | `arg1 = x - 1` |
+| `F3` | `400550` | `call last` | `last(x-1, x+1)` |
+| `F4` | `400555` | `retn` | `return` |
+| **Hàm `main`** | | | |
+| `M1` | `400560` | `call first` | `first(10)` |
+| `M2` | `400565` | `mov rdx, rax` | **Địa chỉ trả về** |
+
+---
+
+### Bảng truy vết thực thi (Execution Trace)
+
+Trạng thái được ghi nhận **ngay trước khi** lệnh tại dòng đó thực thi:
+
+| Nhãn | PC (RIP) | Lệnh thực thi | %rdi | %rsi | %rax | %rsp | *%rsp (Đỉnh Stack) | Mô tả |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **M1** | `0x400560` | `call first` | 10 | — | — | `...e820` | — | `main` gọi `first(10)` |
+| **F1** | `0x400548` | `lea 1(%rdi),%rsi` | 10 | — | — | `...e818` | `0x400565` | Vào `first`, lưu `M2` |
+| **F2** | `0x40054c` | `sub $1, %rdi` | 10 | **11** | — | `...e818` | `0x400565` | `rsi = 10 + 1 = 11` |
+| **F3** | `0x400550` | `call last` | **9** | 11 | — | `...e818` | `0x400565` | `rdi = 10 - 1 = 9` |
+| **L1** | `0x400540` | `mov %rdi, %rax` | 9 | 11 | — | `...e810` | `0x400555` | Vào `last`, lưu `F4` |
+| **L2** | `0x400543` | `imul %rsi, %rax`| 9 | 11 | **9** | `...e810` | `0x400555` | `rax = 9` |
+| **L3** | `0x400547` | `retq` | 9 | 11 | **99** | `...e810` | `0x400555` | `rax = 9 * 11 = 99` |
+| **F4** | `0x400555` | `repz retq` | 9 | 11 | 99 | `...e818` | `0x400565` | Về `first`, pop `F4` |
+| **M2** | `0x400565` | `mov %rax, %rdx` | 9 | 11 | 99 | `...e820` | — | Về `main`, pop `M2` |
+
+---
+
+### IDA Pro Insights (Phân tích tham số và sự đè chồng)
+
+1.  **Sự thay đổi thanh ghi tham số:**
+    *   Hãy để ý ở nhãn **F1** và **F2**. Hàm `first` nhận `x` qua `%rdi`. Để gọi hàm `last(u, v)`, nó cần chuẩn bị `u` vào `%rdi` và `v` vào `%rsi`.
+    *   Trình biên dịch tính `v` trước (`rsi = x + 1`) rồi mới ghi đè `x` để tính `u` (`rdi = x - 1`). 
+    *   Trong IDA, nếu bạn thấy các thanh ghi tham số (`rdi`, `rsi`, `rdx`...) bị thay đổi liên tục ngay trước một lệnh `call`, đó là bước **chuẩn bị đối số** cho hàm sắp được gọi.
+
+2.  **Địa chỉ trả về lồng nhau:**
+    *   Tại thời điểm hàm `last` đang chạy (nhãn **L1, L2**), trên Stack đang có **2 địa chỉ trả về**:
+        *   `0x400555` (đỉnh stack): Để quay về `first`.
+        *   `0x400565` (nằm ngay trên đó): Để quay về `main`.
+    *   IDA Pro hiển thị điều này trong cửa sổ **Call Stack** (Ctrl+Alt+S). Việc hiểu bảng trace này giúp bạn không bị rối khi thấy RSP thay đổi liên tục trong lúc Step Into.
+
+3.  **Lệnh `repz retq`:**
+    *   Như đã lưu ý, đây là một biến thể của `ret` (mã máy `f3 c3`). IDA hiển thị nó là `retn`. Nó thực hiện đúng một nhiệm vụ: lấy giá trị từ đỉnh stack đưa vào thanh ghi lệnh PC.
+
+<tiếp tục>
+
+Dưới đây là phần nội dung từ trang 274, tập trung vào mục **3.7.3 Data Transfer (Truyền dữ liệu)**. Đây là quy ước quan trọng nhất để bạn biết thanh ghi nào đang chứa biến nào khi bắt đầu vào một hàm trong IDA Pro.
+
+---
+
+## 3.7.3 Data Transfer (Truyền dữ liệu)
+
+Ngoài việc chuyển giao điều khiển, các lời gọi hàm còn bao gồm việc truyền dữ liệu dưới dạng đối số (arguments) và nhận về kết quả (return value). Trong x86-64, phần lớn việc truyền dữ liệu này diễn ra thông qua các thanh ghi để đạt tốc độ tối ưu.
+
+### Quy ước truyền tham số qua thanh ghi
+
+x86-64 có thể truyền tối đa **6 tham số số nguyên** (bao gồm cả con trỏ) thông qua các thanh ghi được chỉ định theo một thứ tự nghiêm ngặt. Tên thanh ghi được sử dụng tùy thuộc vào kích thước của kiểu dữ liệu (8, 16, 32 hoặc 64 bits).
+
+#### Hình 3.28: Các thanh ghi truyền tham số
+
+| Thứ tự tham số | 64-bit | 32-bit | 16-bit | 8-bit |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tham số 1** | `%rdi` | `%edi` | `%di` | `%dil` |
+| **Tham số 2** | `%rsi` | `%esi` | `%si` | `%sil` |
+| **Tham số 3** | `%rdx` | `%edx` | `%dx` | `%dl` |
+| **Tham số 4** | `%rcx` | `%ecx` | `%cx` | `%cl` |
+| **Tham số 5** | `%r8` | `%r8d` | `%r8w` | `%r8b` |
+| **Tham số 6** | `%r9` | `%r9d` | `%r9w` | `%r9b` |
+
+---
+
+### Truyền tham số qua Ngăn xếp (Stack)
+
+Khi một hàm có nhiều hơn 6 tham số số nguyên, các tham số còn lại (từ thứ 7 trở đi) sẽ được truyền qua ngăn xếp.
+
+1.  **Vị trí:** Các tham số 7 đến $n$ được đặt trong khung ngăn xếp của **hàm gọi (P)**.
+2.  **Căn chỉnh bộ nhớ:** Khi truyền qua ngăn xếp, tất cả các kích thước dữ liệu đều được làm tròn lên bội số của **8 bytes** để đảm bảo hiệu năng truy cập.
+3.  **Thứ tự:** Tham số thứ 7 sẽ nằm ở đỉnh ngăn xếp (ngay phía trên địa chỉ trả về).
+4.  **Truy cập:** Hàm bị gọi (Q) có thể truy cập các tham số này thông qua các địa chỉ tương đối so với `%rsp`.
+
+---
+
+### Giá trị trả về (Return Value)
+
+*   Thanh ghi **`%rax`** (hoặc các phần con của nó như `%eax`, `%ax`, `%al`) luôn được dùng để chứa giá trị mà hàm trả về cho hàm gọi.
+
+---
+
+### IDA Pro Insights (Quy ước gọi hàm thực tế)
+
+1.  **Nhận diện tham số:** 
+    *   Khi bạn vừa nhảy vào một hàm trong IDA, hãy nhìn vào các thanh ghi `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`. Nếu chúng được sử dụng trước khi được gán giá trị mới, đó chính là các tham số của hàm.
+    *   IDA thường tự động đổi tên các thanh ghi này thành `a1`, `a2`, `a3`,... hoặc `arg0`, `arg1`,...
+2.  **Tham số trên Stack:**
+    *   Nếu bạn thấy lệnh `mov rax, [rsp+8]` hoặc `mov eax, [rbp+10h]` ở đầu hàm, đó là cách chương trình lấy **tham số thứ 7** từ Stack.
+    *   IDA thường gắn nhãn các vị trí này là `arg_0`, `arg_8`,... (lưu ý: `arg_0` trong khung stack của IDA thường tương ứng với tham số thứ 7 thực tế vì 6 cái đầu đã nằm ở thanh ghi).
+3.  **Kích thước tham số:** 
+    *   Nếu hàm nhận một biến `char`, bạn sẽ thấy nó sử dụng `%dil` hoặc `%sil`.
+    *   Nếu hàm nhận biến `int`, bạn sẽ thấy dùng `%edi` hoặc `%esi`.
+    *   Việc quan sát kích thước thanh ghi giúp bạn xác định đúng kiểu dữ liệu trong mã nguồn C gốc.
+
+<tiếp tục>
+
+Dưới đây là phần nội dung tiếp theo từ trang 274 và 275, đi sâu vào ví dụ thực tế về việc truyền nhiều tham số (hơn 6 tham số) và lời giải cho **Practice Problem 3.33**.
+
+---
+
+### Ví dụ: Hàm có nhiều tham số với các kiểu dữ liệu khác nhau
+
+Xét hàm `proc` nhận 8 tham số có kích thước khác nhau (từ 1 đến 8 bytes). Điều này giúp chúng ta thấy rõ cách x86-64 phối hợp giữa thanh ghi và ngăn xếp.
+
+#### 1. Mã nguồn C (Hình 3.29a)
+```c
+void proc(long a1, long *a1p,
+          int a2, int *a2p,
+          short a3, short *a3p,
+          char a4, char *a4p)
+{
+    *a1p += a1;
+    *a2p += a2;
+    *a3p += a3;
+    *a4p += a4;
+}
+```
+
+#### 2. Phân tích mã Assembly (Hình 3.29b)
+**Ánh xạ tham số theo quy ước ABI:**
+*   6 tham số đầu nằm trong thanh ghi: 
+    `a1` (%rdi), `a1p` (%rsi), `a2` (%edx), `a2p` (%rcx), `a3` (%r8w), `a3p` (%r9).
+*   2 tham số cuối nằm trên Stack:
+    `a4` tại `8(%rsp)`, `a4p` tại `16(%rsp)`.
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `proc:` | `proc:` | Nhãn hàm. |
+| 2 | `movq 16(%rsp), %rax` | `mov rax, [rsp+16]` | **Lấy tham số 8** (`a4p`) từ Stack. |
+| 3 | `addq %rdi, (%rsi)` | `add [rsi], rdi` | `*a1p += a1` (8 bytes). |
+| 4 | `addl %edx, (%rcx)` | `add [rcx], edx` | `*a2p += a2` (4 bytes). |
+| 5 | `addw %r8w, (%r9)` | `add [r9], r8w` | `*a3p += a3` (2 bytes). |
+| 6 | `movl 8(%rsp), %edx` | `mov edx, [rsp+8]` | **Lấy tham số 7** (`a4`) từ Stack. |
+| 7 | `addb %dl, (%rax)` | `add [rax], dl` | `*a4p += a4` (1 byte). |
+| 8 | `ret` | `retn` | Trả về. |
+
+---
+
+### Hình 3.30: Cấu trúc Stack Frame của hàm `proc`
+
+Khi hàm `proc` đang thực thi, ngăn xếp của nó trông như sau:
+
+<img width="967" height="284" alt="image" src="https://github.com/user-attachments/assets/a740a9ed-9b09-4c39-83ae-eed392b1431a" />
+
+**Lưu ý quan trọng:** 
+* Biến `a4p (char *)` là một con trỏ, luôn có kích thước 8 bytes trong kiến trúc 64-bit
+* `a4 (char)`: Là kiểu ký tự. Trong C, `char` chỉ có kích thước 1 byte.
+* Mặc dù `a4` kiểu `char` chỉ cần 1 byte, nhưng khi truyền qua Stack, nó vẫn chiếm **8 bytes** để đảm bảo mọi tham số trên ngăn xếp luôn bắt đầu tại địa chỉ là bội số của 8.
+
+---
+
+### Practice Problem 3.33: Xác định thứ tự và kiểu dữ liệu tham số
+
+**Đề bài:** Hàm `procprob` có 4 tham số `u, a, v, b`. Mỗi cái là một số nguyên có dấu hoặc con trỏ.
+Logic C: `*u += a; *v += b; return sizeof(a) + sizeof(b);`
+
+**Mã Assembly:**
+```assembly
+procprob:
+    movslq %edi, %rdi       ; Lệnh 1
+    addq   %rdi, (%rdx)     ; Lệnh 2
+    addb   %sil, (%rcx)     ; Lệnh 3
+    movl   $6, %eax         ; Lệnh 4
+    ret
+```
+
+<details>
+<summary><b>Nhấn để xem lời giải phân tích tham số</b></summary>
+
+Dựa vào thứ tự thanh ghi mặc định (`%rdi`, `%rsi`, `%rdx`, `%rcx`):
+
+1.  **Xác định `a` và `u`:**
+    *   Lệnh 2: `addq %rdi, (%rdx)`. `%rdi` được cộng vào địa chỉ nằm trong `%rdx`. 
+    *   Điều này có nghĩa là tham số thứ 1 (`a`) được cộng vào nơi tham số thứ 3 (`u`) trỏ tới.
+    *   Lệnh 1: `movslq %edi, %rdi` cho thấy `a` ban đầu là 4 bytes (`int`) rồi được mở rộng dấu lên 8 bytes để cộng vào một giá trị `long`.
+    *   $\Rightarrow$ **`a` là `int` (4 bytes)**, **`u` là `long *`**.
+
+2.  **Xác định `b` và `v`:**
+    *   Lệnh 3: `addb %sil, (%rcx)`. Thanh ghi `%sil` (8-bit thấp của `%rsi` - tham số thứ 2) được cộng vào địa chỉ nằm trong `%rcx` (tham số thứ 4).
+    *   $\Rightarrow$ **`b` là tham số thứ 2**, **`v` là tham số thứ 4**.
+    *   Lệnh 4: `return 6`. Ta có `sizeof(a) + sizeof(b) = 6`. Vì `sizeof(a) = 4`, nên `sizeof(b)` phải là **2**.
+    *   $\Rightarrow$ **`b` là `short` (2 bytes)**, **`v` là `char *`** (vì lệnh `addb` tác động lên 1 byte tại đích).
+
+**Kết luận prototype:**
+`long procprob(int a, short b, long *u, char *v)`
+
+</details>
+
+---
+
+### IDA Pro Insights (Cách đọc tham số hỗn hợp)
+
+1.  **Căn chỉnh Stack (Alignment):** Trong IDA, bạn sẽ thấy các tham số stack luôn cách nhau 8 đơn vị (`arg_0`, `arg_8`, `arg_10h`) bất kể kiểu dữ liệu là `char` hay `int`. Đây là quy tắc tối ưu hóa truy cập bộ nhớ.
+2.  **Kích thước lệnh (`addq` vs `addl` vs `addb`):** 
+    *   Nếu IDA hiển thị `add [rax], dl` $\rightarrow$ Đích là con trỏ `char *`.
+    *   Nếu IDA hiển thị `add [rax], edx` $\rightarrow$ Đích là con trỏ `int *`.
+    *   Đây là manh mối quan trọng nhất để bạn khôi phục lại các kiểu dữ liệu `long`, `int`, `short`, `char` trong C.
+3.  **Hàm `sizeof` trong Assembly:** Trong IDA, bạn sẽ không thấy lệnh tính `sizeof`. Kết quả của `sizeof` là một **hằng số** đã được trình biên dịch tính sẵn và nạp trực tiếp vào `%eax` (như lệnh `mov eax, 6` ở dòng 4).
+
+<tiếp tục>
+
+Dưới đây là phần nội dung lý thuyết chi tiết từ 4 bức ảnh bạn cung cấp, tập trung vào mục **3.4.7 Local Storage on the Stack (Lưu trữ cục bộ trên Ngăn xếp)**. Đây là một trong những phần quan trọng bậc nhất của Chương 3, giải thích lý do tại sao và khi nào các biến cục bộ bắt buộc phải được đưa xuống RAM (Stack) thay vì giữ trên thanh ghi, cùng hai ví dụ thực tế cực kỳ trực quan.
+
+---
+
+# 3.7.4 Local Storage on the Stack (Lưu trữ cục bộ trên Ngăn xếp)
+
+Thông thường, trình biên dịch x86-64 sẽ cố gắng giữ toàn bộ biến cục bộ trên các thanh ghi đa năng của CPU để đạt tốc độ tối đa. Tuy nhiên, có **3 trường hợp bắt buộc phải lưu trữ dữ liệu cục bộ trên RAM (Stack)**:
+
+1.  **Thiếu thanh ghi:** Số lượng biến cục bộ vượt quá số lượng thanh ghi đa năng khả dụng của CPU.
+2.  **Sử dụng toán tử lấy địa chỉ (`&`):** Khi mã nguồn C lấy địa chỉ của một biến cục bộ (ví dụ: `&x`), biến đó bắt buộc phải nằm trên RAM (Stack) vì các thanh ghi CPU không có địa chỉ bộ nhớ.
+3.  **Dữ liệu dạng mảng hoặc cấu trúc (Arrays / Structs):** Các cấu trúc dữ liệu này yêu cầu truy cập thông qua chỉ số (index) hoặc độ lệch (offset) địa chỉ, do đó bắt buộc phải được cấp phát liên tục trên bộ nhớ.
+
+**Cơ chế cấp phát:** Thủ tục sẽ cấp phát không gian trên khung ngăn xếp (stack frame) bằng cách giảm con trỏ ngăn xếp `%rsp` (ví dụ: `subq $16, %rsp`). Vùng nhớ này nằm ở phần "Local variables" trong Hình 3.25.
+
+---
+
+### Ví dụ 1: Hàm `caller` và toán tử lấy địa chỉ `&`
+
+Hãy xem xét cách xử lý khi một hàm lấy địa chỉ của biến cục bộ và truyền sang hàm khác.
+
+#### 1. Mã nguồn C:
+```c
+long swap_add(long *xp, long *yp) {
+    long x = *xp;
+    long y = *yp;
+    *xp = y;
+    *yp = x;
+    return x + y;
+}
+
+long caller() {
+    long arg1 = 534;
+    long arg2 = 1057;
+    long sum = swap_add(&arg1, &arg2); // Lấy địa chỉ biến cục bộ
+    long diff = arg1 - arg2;
+    return sum * diff;
+}
+```
+
+#### 2. Phân tích mã Assembly của hàm `caller` (ATT vs Intel/IDA Pro)
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích kỹ thuật |
+| :--- | :--- | :--- | :--- |
+| 1 | `caller:` | `caller:` | Nhãn hàm. |
+| 2 | `subq $16, %rsp` | `sub rsp, 10h` | **Cấp phát 16 bytes** trên Stack cho `arg1` và `arg2`. |
+| 3 | `movq $534, (%rsp)` | `mov qword ptr [rsp], 216h` | Ghi `arg1 = 534` vào đỉnh Stack (`rsp + 0`). |
+| 4 | `movq $1057, 8(%rsp)` | `mov qword ptr [rsp+8], 421h` | Ghi `arg2 = 1057` vào địa chỉ `rsp + 8`. |
+| 5 | `leaq 8(%rsp), %rsi` | `lea rsi, [rsp+8]` | Lấy địa chỉ `arg2` đưa vào `%rsi` (Tham số 2). |
+| 6 | `movq %rsp, %rdi` | `mov rdi, rsp` | Lấy địa chỉ `arg1` đưa vào `%rdi` (Tham số 1). |
+| 7 | `call swap_add` | `call swap_add` | Gọi hàm `swap_add(&arg1, &arg2)`. |
+| 8 | `movq (%rsp), %rdx` | `mov rdx, [rsp]` | Đọc lại giá trị mới của `arg1` (đã bị swap) vào `%rdx`. |
+| 9 | `subq 8(%rsp), %rdx` | `sub rdx, [rsp+8]` | Lấy `arg1` trừ đi `arg2` mới $\rightarrow$ `diff = arg1 - arg2`. |
+| 10 | `imulq %rdx, %rax` | `imul rax, rdx` | Nhân `sum` (trả về trong `%rax`) với `diff`. |
+| 11 | `addq $16, %rsp` | `add rsp, 10h` | **Giải phóng 16 bytes** trên Stack. |
+| 12 | `ret` | `retn` | Trả về kết quả. |
+
+---
+
+### Ví dụ 2: Hàm `call_proc` (Khung Stack phức tạp và > 6 Tham số)
+
+Đây là một ví dụ toàn diện minh họa cách cấp phát Stack cho các biến cục bộ có **kích thước khác nhau** (`long`, `int`, `short`, `char`) đồng thời chuẩn bị tham số trên Stack cho hàm `proc` (hàm nhận đến 8 tham số).
+
+#### 1. Mã nguồn C:
+```c
+long call_proc() {
+    long x1 = 1;      int x2 = 2;
+    short x3 = 3;     char x4 = 4;
+    // proc nhận 8 tham số (truyền địa chỉ của x1, x2, x3, x4)
+    proc(x1, &x1, x2, &x2, x3, &x3, x4, &x4);
+    return (x1 + x2) * (x3 - x4);
+}
+```
+
+#### 2. Phân tích mã Assembly của hàm `call_proc` (ATT vs Intel/IDA Pro)
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích kỹ thuật |
+| :--- | :--- | :--- | :--- |
+| 1 | `call_proc:` | `call_proc:` | Nhãn hàm. |
+| 2 | `subq $32, %rsp` | `sub rsp, 20h` | **Cấp phát 32 bytes** trên Stack. |
+| 3 | `movq $1, 24(%rsp)` | `mov qword ptr [rsp+18h], 1` | Khởi tạo `x1 = 1` (8 bytes, tại offset 24-31). |
+| 4 | `movl $2, 20(%rsp)` | `mov dword ptr [rsp+14h], 2` | Khởi tạo `x2 = 2` (4 bytes, tại offset 20-23). |
+| 5 | `movw $3, 18(%rsp)` | `mov word ptr [rsp+12h], 3` | Khởi tạo `x3 = 3` (2 bytes, tại offset 18-19). |
+| 6 | `movb $4, 17(%rsp)` | `mov byte ptr [rsp+11h], 4` | Khởi tạo `x4 = 4` (1 byte, tại offset 17). |
+| | | | **Bắt đầu chuẩn bị tham số cho hàm `proc`:** |
+| 7 | `leaq 17(%rsp), %rax` | `lea rax, [rsp+11h]` | Lấy địa chỉ `x4`. |
+| 8 | `movq %rax, 8(%rsp)` | `mov [rsp+8], rax` | **Tham số 8 (`&x4`)**: Lưu vào Stack tại offset 8. |
+| 9 | `movl $4, (%rsp)` | `mov dword ptr [rsp], 4` | **Tham số 7 (`x4` = 4)**: Lưu vào Stack tại offset 0 (chiếm 8 bytes). |
+| 10 | `leaq 18(%rsp), %r9` | `lea r9, [rsp+12h]` | **Tham số 6 (`&x3`)**: Truyền qua thanh ghi `%r9`. |
+| 11 | `movl $3, %r8d` | `mov r8d, 3` | **Tham số 5 (`x3` = 3)**: Truyền qua thanh ghi `%r8d`. |
+| 12 | `leaq 20(%rsp), %rcx` | `lea rcx, [rsp+14h]` | **Tham số 4 (`&x2`)**: Truyền qua thanh ghi `%rcx`. |
+| 13 | `movl $2, %edx` | `mov edx, 2` | **Tham số 3 (`x2` = 2)**: Truyền qua thanh ghi `%edx`. |
+| 14 | `leaq 24(%rsp), %rsi` | `lea rsi, [rsp+18h]` | **Tham số 2 (`&x1`)**: Truyền qua thanh ghi `%rsi`. |
+| 15 | `movl $1, %edi` | `mov edi, 1` | **Tham số 1 (`x1` = 1)**: Truyền qua thanh ghi `%edi`. |
+| 16 | `call proc` | `call proc` | Gọi hàm `proc`. |
+| | | | **Sau khi từ hàm `proc` trở về:** |
+| 17 | `movslq 20(%rsp), %rdx`| `movsxd rdx, dword ptr [rsp+14h]` | Đọc `x2` mới từ Stack, mở rộng dấu lên 64-bit. |
+| 18 | `addq 24(%rsp), %rdx` | `add rdx, [rsp+18h]` | Cộng với `x1` mới $\rightarrow$ `rdx = x1 + x2`. |
+| 19 | `movswl 18(%rsp), %eax`| `movsx eax, word ptr [rsp+12h]` | Đọc `x3` mới, mở rộng dấu lên 32-bit. |
+| 20 | `movsbl 17(%rsp), %ecx`| `movsx ecx, byte ptr [rsp+11h]` | Đọc `x4` mới, mở rộng dấu lên 32-bit. |
+| 21 | `subl %ecx, %eax` | `sub eax, ecx` | Tính `x3 - x4`. |
+| 22 | `cltq` | `cdqe` | Mở rộng dấu `%eax` lên `%rax` (64-bit). |
+| 23 | `imulq %rdx, %rax` | `imul rax, rdx` | Nhân kết quả $\rightarrow$ `(x1 + x2) * (x3 - x4)`. |
+| 24 | `addq $32, %rsp` | `add rsp, 20h` | **Giải phóng 32 bytes** trên Stack. |
+| 25 | `ret` | `retn` | Trả về. |
+
+---
+
+### Hình 3.33: Cấu trúc chi tiết Stack Frame của `call_proc` (32 Bytes)
+
+Sơ đồ dưới đây biểu diễn cách phân bổ bộ nhớ chính xác trên ngăn xếp của `call_proc`:
+
+<img width="796" height="253" alt="image" src="https://github.com/user-attachments/assets/58983136-0ba5-4603-9706-e5afe37c1ca4" />
+
+**Sự dịch chuyển địa chỉ khi gọi hàm `proc`:**
+*   Khi `call_proc` chuẩn bị gọi `proc`, nó nạp sẵn **Tham số 7** và **Tham số 8** vào vùng `[rsp + 0]` và `[rsp + 8]`.
+*   Khi lệnh `call proc` được thực thi, bộ xử lý tự động đẩy địa chỉ trả về (8 bytes) vào đỉnh Stack.
+*   **Kết quả:** Bên trong hàm `proc`, toàn bộ đỉnh Stack bị dịch xuống 8 bytes. Lúc này, từ góc nhìn của hàm `proc`, **Tham số 7** sẽ nằm ở `8(%rsp)` và **Tham số 8** sẽ nằm ở `16(%rsp)`. Điều này hoàn toàn khớp với những gì ta đã học ở Mục 3.7.3!
+
+---
+
+### IDA Pro Insights (Kỹ năng phân tích Stack Frame nâng cao)
+
+Khi bạn dịch ngược hàm có cấu trúc Stack phức tạp như `call_proc` trong IDA Pro:
+
+1.  **Nhận diện các kiểu dữ liệu khác nhau:**
+    *   IDA Pro sẽ tạo một Stack View chứa danh sách biến. Bạn sẽ thấy các biến được định nghĩa kích thước khác nhau nằm liền kề:
+        *   `var_18` (8 bytes) $\rightarrow$ tương ứng với `x1` kiểu `long`.
+        *   `var_14` (4 bytes) $\rightarrow$ tương ứng với `x2` kiểu `int`.
+        *   `var_12` (2 bytes) $\rightarrow$ tương ứng với `x3` kiểu `short`.
+        *   `var_11` (1 byte)  $\rightarrow$ tương ứng với `x4` kiểu `char`.
+2.  **Sự xuất hiện của Biến đệm (Padding):**
+    *   Trong Stack View của IDA, bạn sẽ thấy giữa `var_11` (offset 17) và vùng đối số `arg_0` (offset 8) có một vùng trống không tên (ở offset 16). Đây là **vùng đệm căn chỉnh (Alignment Padding)** của trình biên dịch để đảm bảo dữ liệu luôn được căn lề chẵn địa chỉ, giúp CPU đọc nhanh hơn.
+3.  **Nhận diện "Argument Build Area":**
+    *   Nếu ở đầu hàm có lệnh `sub rsp, 20h` (32 bytes), nhưng vùng biến cục bộ được IDA nhận diện chỉ chiếm khoảng 16 bytes, thì 16 bytes trống ở đáy ngăn xếp chính là **vùng dựng tham số (Argument Build Area)** để chuẩn bị cho các tham số thứ 7 và thứ 8 của hàm tiếp theo.
+4.  **Cặp đôi `lea` và `mov`:**
+    *   Trong IDA, khi thấy lệnh `lea rax, [rsp+20h+var_11]` theo sau bởi một lệnh nạp vào stack `mov [rsp+8], rax` ngay trước lệnh `call`, đó chính là thao tác **lấy địa chỉ của một biến cục bộ để truyền làm tham số cho hàm khác**.
+
+---
+
+<tạm dừng>

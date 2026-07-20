@@ -5574,3 +5574,238 @@ Khi bạn gặp một vòng lặp duyệt mảng đa chiều trong IDA Pro:
 2.  **Tính toán kích thước hàng:** Trong IDA, hãy trace ngược lại xem thanh ghi `r9` được tính như thế nào. Nếu bạn thấy `shl r9, 2` (dịch trái 2 bit = nhân 4), bạn biết mỗi phần tử mảng chiếm 4 bytes (kiểu `int`).
 3.  **Sự thông minh của Compiler:** Trình biên dịch có thể nhận diện các mẫu hình (patterns) khi chương trình duyệt qua các phần tử của mảng đa chiều và tự động tạo ra mã dựa trên con trỏ (pointer-based) để tránh phép nhân theo công thức địa chỉ tiêu chuẩn. Điều này giúp cải thiện hiệu suất nhưng làm mã assembly khó đọc hơn so với mã C ban đầu.
 
+---
+
+# 3.9 Heterogeneous Data Structures
+
+Ngôn ngữ C cung cấp hai cơ chế để tạo ra các kiểu dữ liệu bằng cách kết hợp các đối tượng thuộc các kiểu khác nhau:
+1.  **Structures (Cấu trúc):** Khai báo bằng từ khóa `struct`, gộp nhiều đối tượng vào một đơn vị duy nhất.
+2.  **Unions (Liên hợp):** Khai báo bằng từ khóa `union`, cho phép một đối tượng được tham chiếu bằng nhiều kiểu dữ liệu khác nhau.
+
+---
+
+## 3.9.1 Structures
+
+Cấu trúc `struct` tạo ra một kiểu dữ liệu nhóm các đối tượng (các trường - fields) có thể khác kiểu nhau. 
+
+**Nguyên tắc triển khai mức máy:**
+*   **Vùng nhớ liên tục:** Tất cả các thành phần của một struct được lưu trữ trong một vùng nhớ liên tục.
+*   **Địa chỉ gốc:** Con trỏ trỏ tới struct chính là địa chỉ của byte đầu tiên của nó.
+*   **Offset (Độ lệch):** Trình biên dịch duy trì thông tin về từng kiểu struct để xác định độ lệch byte của mỗi trường. Nó sử dụng các offset này làm hằng số (displacement) trong các lệnh tham chiếu bộ nhớ.
+
+---
+
+### Ví dụ minh họa: `struct rec`
+
+Xét khai báo cấu trúc sau:
+```c
+struct rec {
+    int i;     // 4 bytes
+    int j;     // 4 bytes
+    int a[2];  // 8 bytes (2 * 4 bytes)
+    int *p;    // 8 bytes
+};
+```
+
+**Sơ đồ phân bổ bộ nhớ (Layout):**
+Tổng kích thước struct là **24 bytes**.
+
+| Trường (Field) | Offset (Byte) | Kích thước | Nội dung |
+| :--- | :---: | :---: | :--- |
+| `i` | **0** | 4 | Số nguyên `int` |
+| `j` | **4** | 4 | Số nguyên `int` |
+| `a[0]` | **8** | 4 | Phần tử mảng `int` |
+| `a[1]` | **12** | 4 | Phần tử mảng `int` |
+| `p` | **16** | 8 | Con trỏ `int *` |
+
+---
+
+### Truy cập các trường trong Assembly (ATT vs Intel/IDA Pro)
+
+Giả sử biến `r` kiểu `struct rec *` nằm trong thanh ghi **`%rdi`**.
+
+#### 1. Truy cập trường đơn giản: `r->j = r->i;`
+| AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- |
+| `movl (%rdi), %eax` | `mov eax, [rdi]` | Lấy `r->i` (offset 0). |
+| `movl %eax, 4(%rdi)` | `mov [rdi+4], eax` | Lưu vào `r->j` (offset 4). |
+
+#### 2. Lấy địa chỉ phần tử mảng: `&r->a[i]` (với `i` nằm trong `%rsi`)
+| AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- |
+| `leaq 8(%rdi,%rsi,4), %rax`| `lea rax, [rdi+rsi*4+8]` | **Base + Offset_a + i*4**. |
+
+#### 3. Ví dụ phức tạp: `r->p = &r->a[r->i + r->j];`
+Chuỗi lệnh thực hiện phép tính này:
+
+| Dòng | AT&T Syntax | Intel Syntax (IDA Pro) | Ý nghĩa logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `movl 4(%rdi), %eax` | `mov eax, [rdi+4]` | Lấy `r->j`. |
+| 2 | `addl (%rdi), %eax` | `add eax, [rdi]` | Cộng thêm `r->i`. |
+| 3 | `cltq` | `cdqe` | Mở rộng `int` lên 64-bit. |
+| 4 | `leaq 8(%rdi,%rax,4), %rax`| `lea rax, [rdi+rax*4+8]` | Tính địa chỉ phần tử mảng. |
+| 5 | `movq %rax, 16(%rdi)` | `mov [rdi+16], rax` | Lưu vào `r->p` (offset 16). |
+
+---
+
+### Bài học then chốt về Reverse Engineering:
+Việc lựa chọn các trường khác nhau của một struct được xử lý **hoàn toàn tại thời điểm biên dịch**. Trong mã máy (binary) mà IDA Pro hiển thị:
+*   **Không có tên trường:** Mọi thứ chỉ là các con số offset (`+4`, `+8`, `+16`).
+*   **Không có khai báo struct:** Mã máy không biết dữ liệu đó thuộc về một `struct` hay một mảng. Nó chỉ thấy các thao tác tính toán địa chỉ trên bộ nhớ.
+
+---
+
+### IDA Pro Insights (Kỹ năng khôi phục Struct)
+
+Khi bạn thấy một thanh ghi địa chỉ (như `rdi`) liên tục được cộng với các hằng số cố định (`[rdi+4]`, `[rdi+16]`), đó là dấu hiệu của một **Structure**.
+
+1.  **Tạo Struct:** Trong IDA, nhấn **Shift+F9** (Structures window) để tạo một struct mới dựa trên các offset bạn tìm thấy.
+2.  **Áp dụng Struct:** Quay lại mã giả/mã assembly, chọn thanh ghi đó và nhấn phím **"T"**. IDA sẽ thay thế các offset vô hồn (`+16h`) bằng tên trường cụ thể (`->p`), làm code dễ đọc hơn rất nhiều.
+3.  **Hậu tố kích thước:** Hãy để ý lệnh `movl` (4 bytes) vs `movq` (8 bytes). Đây là cách để bạn xác định kiểu dữ liệu của trường đó là `int` hay là con trỏ/`long`.
+4.  **Lệnh `lea`:** Nếu thấy `lea` cộng hằng số vào địa chỉ struct, hãy nghĩ ngay đến toán tử **`&`** (lấy địa chỉ trường hoặc phần tử mảng bên trong struct).
+
+---
+
+### Kiến thức cho người mới học C: Biểu diễn đối tượng bằng Struct (Aside)
+
+Khai báo `struct` trong C là thứ gần gũi nhất với các "đối tượng" (objects) trong C++ và Java. Nó cho phép lập trình viên giữ thông tin về một thực thể trong một cấu trúc dữ liệu duy nhất và tham chiếu đến thông tin đó bằng tên.
+
+#### Ví dụ: Cấu trúc Hình chữ nhật (`struct rect`)
+Một chương trình đồ họa có thể biểu diễn một hình chữ nhật bằng cấu trúc sau:
+
+```c
+struct rect {
+    long llx;             /* Tọa độ X của góc dưới bên trái (8 bytes) */
+    long lly;             /* Tọa độ Y của góc dưới bên trái (8 bytes) */
+    unsigned long width;  /* Chiều rộng (pixels) (8 bytes)             */
+    unsigned long height; /* Chiều cao (pixels) (8 bytes)              */
+    unsigned color;       /* Mã màu (4 bytes)                          */
+};
+```
+
+**Cách khai báo và truy cập:**
+*   Dùng toán tử dấu chấm (`.`) để truy cập trường: `r.llx = 0;`.
+*   Có thể khởi tạo nhanh: `struct rect r = { 0, 0, 0xFF00FF, 10, 20 };`.
+
+---
+
+### Truyền con trỏ Struct và toán tử Mũi tên (`->`)
+
+Trong thực tế, người ta thường truyền **con trỏ** trỏ tới struct (`struct rect *rp`) thay vì sao chép toàn bộ struct vào hàm để tiết kiệm bộ nhớ và thời gian.
+
+#### 1. Hàm tính diện tích (`area`)
+```c
+long area(struct rect *rp) {
+    return (*rp).width * (*rp).height;
+}
+```
+*   **Lưu ý cú pháp:** Cần dùng ngoặc đơn `(*rp).width` vì toán tử dấu chấm có độ ưu tiên cao hơn toán tử giải mã con trỏ. Nếu viết `*rp.width`, trình biên dịch sẽ hiểu lầm là `*(rp.width)`.
+*   **Toán tử `->`:** Để thuận tiện, C cung cấp toán tử mũi tên. `rp->width` hoàn toàn tương đương với `(*rp).width`.
+
+#### 2. Hàm xoay hình chữ nhật (`rotate_left`)
+Hàm này xoay hình chữ nhật ngược chiều kim đồng hồ 90 độ:
+```c
+void rotate_left(struct rect *rp) {
+    /* Tráo đổi chiều rộng và chiều cao */
+    long t = rp->height;
+    rp->height = rp->width;
+    rp->width = t;
+    /* Dịch chuyển sang góc dưới bên trái mới */
+    rp->llx -= t;
+}
+```
+
+---
+
+### Sự khác biệt giữa C Struct và Đối tượng (C++/Java)
+Các đối tượng trong C++ và Java phức tạp hơn struct trong C vì chúng liên kết cả các **phương thức** (methods - các hàm có thể được gọi để thực hiện tính toán) trực tiếp với đối tượng. Trong C, chúng ta chỉ có dữ liệu trong struct, còn các hàm (như `area` và `rotate_left`) được viết riêng biệt và nhận con trỏ struct làm tham số.
+
+---
+
+### IDA Pro Insights (Tư duy ánh xạ Struct thực tế)
+
+Mặc dù trang này không có mã máy, nhưng cấu trúc `struct rect` trên sẽ giúp bạn hiểu cách IDA Pro tính toán địa chỉ:
+
+1.  **Tính toán Offset:** Trình biên dịch sẽ tính sẵn vị trí các trường trong bộ nhớ:
+    *   `llx`: Offset 0
+    *   `lly`: Offset 8
+    *   `width`: Offset 16 (10h)
+    *   `height`: Offset 24 (18h)
+    *   `color`: Offset 32 (20h)
+
+2.  **Logic trong IDA:** Khi bạn xem hàm `area` trong IDA, bạn sẽ thấy:
+    ```assembly
+    mov rax, [rdi+10h]  ; Lấy rp->width (offset 16)
+    imul rax, [rdi+18h] ; Nhân với rp->height (offset 24)
+    retn
+    ```
+3.  **Kích thước dữ liệu:**
+    *   Lưu ý `llx`, `lly`, `width`, `height` đều là 8 bytes, nên IDA sẽ dùng lệnh `mov rax` (64-bit).
+    *   Trường `color` là `unsigned int` (4 bytes), nên IDA sẽ dùng lệnh `mov eax` (32-bit). Việc chú ý kích thước thanh ghi giúp bạn đoán đúng kiểu dữ liệu của trường trong struct.
+4.  **Sự biến mất của tên:** Trong file thực thi thực tế, tên `llx` hay `width` biến mất hoàn toàn. IDA chỉ thấy `[rdi+10h]`. Việc định nghĩa Struct trong IDA (**Shift+F9**) và gán kiểu (**phím Y**) là cách duy nhất để mang những cái tên này quay trở lại mã giả.
+
+---
+
+### Practice Problem 3.42: Nghịch đảo mã cấu trúc Danh sách liên kết
+
+**Khai báo cấu trúc C:**
+```c
+struct ACE {
+    short v;      /* Giá trị: Offset 0, Size 2 bytes */
+    struct ACE *p; /* Con trỏ kế tiếp: Offset 2, Size 8 bytes */
+};
+```
+
+#### 1. Phân tích mã Assembly (ATT vs Intel/IDA Pro)
+*Quy ước: `ptr` nằm trong `%rdi`, kết quả trả về `val` nằm trong `%rax`*
+
+| Dòng | AT&T Syntax | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `test:` | `test:` | Nhãn hàm. |
+| 2 | `movl $1, %eax` | `mov eax, 1` | Khởi tạo **`val = 1`**. |
+| 3 | `jmp .L2` | `jmp short loc_check` | **Jump-to-middle**: Nhảy tới phần kiểm tra. |
+| 4 | `.L3:` | `loc_loop:` | **Thân vòng lặp (Body)**: |
+| 5 | `imulq (%rdi), %rax` | `imul rax, [rdi]` | **`val *= ptr->v`**. (Nhân giá trị hiện tại). |
+| 6 | `movq 2(%rdi), %rdi` | `mov rdi, [rdi+2]` | **`ptr = ptr->p`**. (Nhảy sang node kế tiếp). |
+| 7 | `.L2:` | `loc_check:` | **Phần kiểm tra (Test)**: |
+| 8 | `testq %rdi, %rdi` | `test rdi, rdi` | Kiểm tra **`ptr == NULL`**? |
+| 9 | `jne .L3` | `jnz short loc_loop` | Nếu **`ptr != NULL`**, tiếp tục lặp. |
+| 10 | `rep; ret` | `retn` | Trả về `val`. |
+
+---
+
+### Trả lời câu hỏi:
+
+**A. Viết mã nguồn C cho hàm `test`:**
+
+```c
+short test(struct ACE *ptr) {
+    short val = 1;
+    while (ptr) {
+        val *= ptr->v;
+        ptr = ptr->p;
+    }
+    return val;
+}
+```
+
+**B. Mô tả cấu trúc dữ liệu và thao tác mà hàm thực hiện:**
+*   **Cấu trúc dữ liệu:** Đây là một **Danh sách liên kết đơn (Singly Linked List)**, trong đó mỗi node (`struct ACE`) chứa một giá trị số nguyên kiểu `short` và một con trỏ trỏ đến phần tử tiếp theo.
+*   **Thao tác:** Hàm này thực hiện việc duyệt qua toàn bộ danh sách liên kết và tính **tích (product)** của tất cả các giá trị `v` có trong danh sách.
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện Linked List)
+
+Khi bạn gặp mẫu hình này trong IDA Pro, đây là những dấu hiệu nhận biết cấu trúc danh sách:
+
+1.  **Mẫu hình "Self-Pointer Update":** 
+    *   Lệnh `mov rdi, [rdi + offset]` (dòng 6) bên trong một vòng lặp là bằng chứng đanh thép của việc duyệt danh sách hoặc cây. Nó lấy địa chỉ ở node hiện tại để ghi đè vào chính con trỏ duyệt, nhằm "nhảy" sang node tiếp theo.
+2.  **Kiểm tra NULL làm điều kiện lặp:**
+    *   Lệnh `test rdi, rdi` theo sau bởi `jnz` dẫn ngược lên đầu vòng lặp là cách mã máy thực hiện `while (ptr != NULL)`.
+3.  **Xác định Offset của trường `next`:**
+    *   Trong bài này, `v` ở offset 0 và `p` ở offset 2. IDA sẽ hiển thị `[rdi+2]`. 
+    *   *Lưu ý thực tế:* Trong các hệ thống hiện đại, do quy tắc căn lề (alignment), trường con trỏ `p` thường sẽ nằm ở offset 8 thay vì offset 2 để đạt hiệu năng tốt nhất. Nhưng trong ví dụ học thuật này, trình biên dịch đã nén chúng lại.
+4.  **Lệnh nhân tích lũy:**
+    *   Lệnh `imul rax, [rdi]` lấy dữ liệu tại địa chỉ node và nhân vào `rax`. IDA sẽ nhận diện `rax` là biến tích lũy (accumulator) vì nó được khởi tạo bằng 1 (`mov eax, 1`) - phần tử đơn vị của phép nhân.
+

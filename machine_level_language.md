@@ -5067,3 +5067,510 @@ long rfun(unsigned long x) {
 3.  **Toán tử dịch bit:** Lệnh `shl`/`shr` hằng số trong IDA thường đại diện cho các phép nhân/chia lũy thừa của 2 trong C. Ở đây `shr rdi, 2` chính là `x / 4`.
 4.  **Luồng trả về tích lũy:** Lệnh `add rax, rbx` sau lệnh `call` là dấu hiệu của một hàm tính toán kiểu tích lũy (ví dụ: tính tổng các phần tử, tính giai thừa, hoặc như bài này là tổng các giá trị dịch bit).
 
+---
+
+## 3.8 Array Allocation and Access (Cấp phát và Truy cập mảng)
+
+Mảng trong C là một phương thức để gộp các dữ liệu vô hướng (scalar data) thành các kiểu dữ liệu lớn hơn. C sử dụng một cách triển khai mảng đặc biệt đơn giản, do đó việc chuyển dịch sang mã máy khá trực diện. Một đặc điểm khác biệt của C là chúng ta có thể tạo ra các con trỏ tới các phần tử trong mảng và thực hiện các phép toán số học trên con trỏ đó. Các phép toán này được dịch trực tiếp thành các phép tính toán địa chỉ trong mã máy.
+
+---
+
+## 3.8.1 Basic Principles (Các nguyên tắc cơ bản)
+
+Với kiểu dữ liệu $T$ và một hằng số nguyên $N$, xét khai báo có dạng:
+`T A[N];`
+
+Khai báo này có hai tác động:
+1.  **Cấp phát bộ nhớ:** Nó cấp phát một vùng nhớ liên tục (contiguous region) có kích thước $L \cdot N$ bytes, trong đó $L$ là kích thước (tính bằng byte) của kiểu dữ liệu $T$.
+2.  **Tạo định danh:** Nó giới thiệu định danh `A` có thể được sử dụng như một con trỏ trỏ đến điểm bắt đầu của mảng. Giá trị của con trỏ này là địa chỉ bắt đầu $x_A$.
+
+**Công thức truy cập phần tử:**
+Các phần tử mảng có thể được truy cập bằng chỉ số nguyên $i$ nằm trong khoảng từ $0$ đến $N-1$. Phần tử mảng thứ $i$ sẽ được lưu trữ tại địa chỉ:
+$$\text{Address}(A[i]) = x_A + L \cdot i$$
+
+---
+
+### Ví dụ về các loại khai báo mảng
+
+Dưới đây là các tham số được tạo ra cho một số khai báo mảng phổ biến trên x86-64:
+
+| Khai báo C | Kích thước phần tử ($L$) | Tổng kích thước | Địa chỉ bắt đầu | Địa chỉ phần tử $i$ |
+| :--- | :---: | :---: | :---: | :--- |
+| `char A[12]` | 1 | 12 | $x_A$ | $x_A + i$ |
+| **`char *B[8]`** | 8 | 64 | $x_B$ | $x_B + 8i$ |
+| `int C[6]` | 4 | 24 | $x_C$ | $x_C + 4i$ |
+| **`double *D[5]`**| 8 | 40 | $x_D$ | $x_D + 8i$ |
+
+**Phân tích kỹ thuật:**
+*   Mảng **A** gồm 12 ký tự 1-byte.
+*   Mảng **C** gồm 6 số nguyên 4-byte.
+*   Mảng **B** và **D** là các mảng chứa **con trỏ** (pointer), do đó mỗi phần tử đều chiếm 8 bytes trong kiến trúc 64-bit.
+
+---
+
+### Truy cập mảng trong x86-64 (Optimized Access)
+
+Các lệnh tham chiếu bộ nhớ của x86-64 được thiết kế để đơn giản hóa việc truy cập mảng. 
+
+**Ví dụ:** Giả sử `E` là một mảng kiểu `int` (4 bytes).
+*   Địa chỉ bắt đầu của `E` nằm trong `%rdx`.
+*   Chỉ số `i` nằm trong `%rcx`.
+
+Để thực hiện phép gán `eax = E[i]`, trình biên dịch chỉ cần dùng một lệnh duy nhất:
+
+| Cú pháp ATT (Sách) | **Cú pháp Intel (IDA Pro)** | Logic tính toán |
+| :--- | :--- | :--- |
+| `movl (%rdx, %rcx, 4), %eax` | **`mov eax, [rdx + rcx*4]`** | $x_E + 4 \cdot i$ |
+
+**Cơ chế:** Bộ vi xử lý thực hiện tính toán địa chỉ $x_E + 4i$ ngay trong chu kỳ đọc bộ nhớ. Các hệ số tỉ lệ (scaling factors) cho phép là **1, 2, 4, và 8**, bao phủ chính xác kích thước của tất cả các kiểu dữ liệu nguyên thủy phổ biến.
+
+---
+
+### IDA Pro Insights (Cách nhận diện mảng)
+
+1.  **Scaled Indexing:** Khi bạn thấy một lệnh truy cập bộ nhớ có dạng `[reg1 + reg2 * Scale]`, gần như chắc chắn bạn đang đối mặt với một thao tác truy cập mảng.
+    *   `Scale = 1`: Mảng `char` hoặc `byte`.
+    *   `Scale = 2`: Mảng `short` hoặc `word`.
+    *   `Scale = 4`: Mảng `int` hoặc `float`.
+    *   `Scale = 8`: Mảng `long`, `double` hoặc mảng các con trỏ.
+2.  **Global Arrays:** Nếu mảng là biến toàn cục, IDA Pro sẽ hiển thị địa chỉ bắt đầu dưới dạng nhãn (ví dụ: `mov eax, ds:global_array[rcx*4]`).
+3.  **Local Arrays:** Nếu mảng nằm trên Stack, bạn sẽ thấy địa chỉ tính từ `%rsp` (ví dụ: `lea rax, [rsp+10h]`, sau đó dùng `rax` làm địa chỉ cơ sở).
+4.  **Pointer Arithmetic:** Đôi khi trình biên dịch không dùng `Scale`. Nếu bạn thấy `add rdi, 4` bên trong một vòng lặp đang duyệt mảng, đó là cách nó dịch chuyển con trỏ sang phần tử tiếp theo của mảng `int`.
+
+---
+
+### Practice Problem 3.36: Tính toán đặc tính của Mảng trên x86-64
+
+Dựa trên các khai báo C đã cho, chúng ta tính toán kích thước phần tử ($L$), tổng kích thước vùng nhớ được cấp phát, và công thức tính địa chỉ của phần tử thứ $i$.
+
+**Quy tắc kích thước trên x86-64:**
+*   `short`: 2 bytes.
+*   `int`: 4 bytes.
+*   `double`: 8 bytes.
+*   **Con trỏ (mọi loại - `*`, `**`):** Luôn là **8 bytes**.
+
+---
+
+### Bảng lời giải chi tiết
+
+| Mảng (Array) | Khai báo C | Kích thước phần tử ($L$) | Tổng kích thước (Bytes) | Địa chỉ bắt đầu | Địa chỉ phần tử $i$ |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **P** | `int P[5]` | 4 | $4 \times 5 = \mathbf{20}$ | $x_P$ | $x_P + 4i$ |
+| **Q** | `short Q[2]` | 2 | $2 \times 2 = \mathbf{4}$ | $x_Q$ | $x_Q + 2i$ |
+| **R** | `int **R[9]` | **8** | $8 \times 9 = \mathbf{72}$ | $x_R$ | $x_R + 8i$ |
+| **S** | `double *S[10]`| **8** | $8 \times 10 = \mathbf{80}$ | $x_S$ | $x_S + 8i$ |
+| **T** | `short *T[2]` | **8** | $8 \times 2 = \mathbf{16}$ | $x_T$ | $x_T + 8i$ |
+
+---
+
+### Phân tích kỹ thuật (Lưu ý để không bị nhầm lẫn)
+
+1.  **Mảng con trỏ (Arrays of Pointers):**
+    *   Hãy nhìn vào các mảng **R, S, T**. Dù kiểu dữ liệu gốc là `int`, `double` hay `short`, nhưng vì chúng được khai báo là mảng con trỏ (`*` hoặc `**`), kích thước mỗi phần tử trong mảng đó **luôn là 8 bytes** trên kiến trúc 64-bit.
+    *   Sai lầm phổ biến là lấy kích thước của kiểu dữ liệu đích (ví dụ lấy 2 bytes cho `short *T[2]`). Hãy nhớ: Mảng chứa cái gì thì tính kích thước của cái đó. Ở đây nó chứa địa chỉ.
+
+2.  **Tính toán Offset:**
+    *   Hệ số nhân ($Scale$) trong công thức địa chỉ chính là kích thước phần tử $L$. 
+    *   Trong mã máy, điều này tương ứng với các giá trị scale của x86-64 (1, 2, 4, 8).
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện mảng con trỏ)
+
+Khi bạn gặp một lệnh truy cập mảng trong IDA Pro:
+
+1.  **Dấu hiệu mảng dữ liệu vs Mảng con trỏ:**
+    *   `mov eax, [rdx + rcx * 4]` $\rightarrow$ Scale là 4. Khả năng cao đây là mảng `int` hoặc `float` (Mảng dữ liệu).
+    *   `mov rax, [rdx + rcx * 8]` $\rightarrow$ Scale là 8. Đây có thể là mảng `long` hoặc là một **mảng con trỏ**. 
+    *   Nếu sau lệnh này, giá trị trong `rax` lại tiếp tục được dùng làm địa chỉ (ví dụ: `mov rsi, [rax]`), thì chắc chắn mảng ban đầu là một mảng con trỏ (như các mảng R, S, T trong bài tập).
+
+2.  **Xác định kích thước mảng:**
+    *   IDA thường hiển thị các mảng toàn cục dưới dạng nhãn. Nếu bạn thấy nhãn `ArrayP` và ngay dưới đó là `ArrayQ` cách nhau 20 bytes (0x14), bạn có thể suy luận mảng P có tổng kích thước là 20 bytes. 
+    *   Kết hợp với lệnh truy cập dùng scale 4, bạn tính được số phần tử: $20 / 4 = 5$ phần tử. Đây là cách chúng ta khôi phục lại khai báo `int P[5]` từ file binary.
+
+---
+
+## 3.8.2 Pointer Arithmetic (Số học con trỏ)
+
+Ngôn ngữ C cho phép thực hiện các phép toán cộng/trừ trên con trỏ. Giá trị tính toán được sẽ được **tỉ lệ hóa (scaled)** theo kích thước của kiểu dữ liệu mà con trỏ trỏ tới. 
+*   Nếu `p` là con trỏ kiểu `T*` và có giá trị địa chỉ là $x_p$.
+*   Biểu thức `p + i` trong C sẽ có giá trị địa chỉ thực tế là: $x_p + L \cdot i$ (với $L$ là kích thước của kiểu dữ liệu `T`).
+
+Các toán tử đơn phân `&` (lấy địa chỉ) và `*` (giải mã con trỏ) cho phép chuyển đổi qua lại giữa con trỏ và giá trị:
+*   Nếu `Expr` là một đối tượng, thì `&Expr` là con trỏ tới đối tượng đó.
+*   Nếu `AExpr` là một địa chỉ, thì `*AExpr` là giá trị tại địa chỉ đó.
+*   **Định đẳng thức mảng:** Biểu thức mảng `A[i]` hoàn toàn tương đương với `*(A + i)`.
+
+---
+
+### Bảng phân tích các biểu thức mảng và con trỏ
+
+Giả sử: Địa chỉ bắt đầu của mảng số nguyên `E` (kiểu `int`) nằm trong `%rdx`, và chỉ số `i` nằm trong `%rcx`.
+
+| Biểu thức C | Kiểu trả về | Giá trị logic | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) |
+| :--- | :--- | :--- | :--- | :--- |
+| `E` | `int *` | $x_E$ | `movq %rdx, %rax` | `mov rax, rdx` |
+| `E[0]` | `int` | $M[x_E]$ | `movl (%rdx), %eax` | `mov eax, [rdx]` |
+| `E[i]` | `int` | $M[x_E + 4i]$ | `movl (%rdx,%rcx,4), %eax`| `mov eax, [rdx + rcx*4]` |
+| `&E[2]` | `int *` | $x_E + 8$ | `leaq 8(%rdx), %rax` | `lea rax, [rdx + 8]` |
+| `E + i - 1`| `int *` | $x_E + 4i - 4$ | `leaq -4(%rdx,%rcx,4), %rax`| `lea rax, [rdx + rcx*4 - 4]` |
+| `*(E + i - 3)`| `int` | $M[x_E + 4i - 12]$| `movl -12(%rdx,%rcx,4), %eax`| `mov eax, [rdx + rcx*4 - 12]` |
+| `&E[i] - E`| `long` | $i$ | `movq %rcx, %rax` | `mov rax, rcx` |
+
+---
+
+### Phân tích kỹ thuật chuyên sâu
+
+1.  **Sự khác biệt giữa `mov` và `lea`:**
+    *   Hãy nhìn vào `&E[2]`: Trình biên dịch dùng lệnh **`leaq`**. Nó chỉ tính toán địa chỉ $x_E + 8$ rồi nạp vào `%rax`. Không có thao tác truy cập RAM nào xảy ra.
+    *   Hãy nhìn vào `E[i]`: Trình biên dịch dùng lệnh **`movl`**. Nó tính toán địa chỉ $x_E + 4i$, sau đó **truy cập vào RAM** tại địa chỉ đó để lấy giá trị nạp vào `%eax`.
+
+2.  **Kích thước thanh ghi:**
+    *   Các phép toán trả về **giá trị** của mảng `int` (4 bytes) sử dụng thanh ghi 32-bit như **`%eax`**.
+    *   Các phép toán trả về **địa chỉ/con trỏ** (8 bytes) sử dụng thanh ghi 64-bit như **`%rax`**.
+
+3.  **Phép trừ hai con trỏ (`&E[i] - E`):**
+    *   Trong C, hiệu của hai con trỏ cùng kiểu dữ liệu sẽ trả về khoảng cách tính theo **số lượng phần tử** (kiểu `long`), không phải số lượng byte.
+    *   Vì `&E[i]` có địa chỉ $x_E + 4i$ và `E` có địa chỉ $x_E$, khoảng cách byte là $4i$. Khi chia cho kích thước kiểu `int` (4 bytes), kết quả trả về đúng bằng chỉ số **`i`**. Trình biên dịch chỉ đơn giản là copy giá trị `i` từ `%rcx` sang `%rax`.
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện logic con trỏ)
+
+1.  **LEA là "Máy tính địa chỉ":** Trong IDA, khi bạn thấy lệnh `lea`, hãy hiểu ngay mã nguồn C đang dùng toán tử `&` hoặc đang tính toán vị trí của một phần tử mảng nhưng **chưa lấy giá trị** tại đó.
+2.  **Scale Factor (Hệ số tỉ lệ):** Trình biên dịch tự động nhúng kích thước của kiểu dữ liệu vào lệnh máy. 
+    *   Nếu bạn thấy `[rdx + rcx*4]`, bạn biết đó là mảng các phần tử 4-byte (`int`, `float`). 
+    *   Nếu bạn thấy `[rdx + rcx*8]`, đó là mảng các phần tử 8-byte (`long`, `double`, `pointer`).
+3.  **Offset âm:** Trong lệnh `mov eax, [rdx + rcx*4 - 12]`, giá trị `-12` chính là kết quả của $3 \times 4 \text{ bytes}$. Trình biên dịch đã tính toán trước các hằng số để gộp vào một lệnh duy nhất nhằm tối ưu tốc độ. Khi dịch ngược, bạn lấy hằng số này chia cho Scale (12/4 = 3) để tìm ra chỉ số lùi trong mã C.
+
+---
+
+## 3.8.3 Nested Arrays (Mảng lồng nhau / Mảng đa chiều)
+
+Trong C, mảng đa chiều thực chất là "mảng của các mảng". Các nguyên tắc cấp phát và tham chiếu mảng vẫn giữ nguyên ngay cả khi chúng ta lồng chúng lại.
+
+**Ví dụ:** Khai báo `int A[5][3];`
+*   Tương đương với việc định nghĩa một kiểu dữ liệu mới là mảng 3 số nguyên: `typedef int row3_t[3];` sau đó khai báo `row3_t A[5];`.
+*   **Tổng kích thước:** $4 \text{ (int)} \times 5 \text{ (hàng)} \times 3 \text{ (cột)} = 60$ bytes.
+
+### Thứ tự lưu trữ: Row-Major Order (Thứ tự ưu tiên hàng)
+Kiến trúc C sắp xếp các mảng đa chiều trong bộ nhớ theo hàng. Nghĩa là toàn bộ các phần tử của hàng 0 (`A[0]`) được đặt trước, sau đó đến toàn bộ hàng 1 (`A[1]`), và cứ thế tiếp tục.
+
+### Công thức tính địa chỉ tổng quát
+Cho mảng được khai báo là `T D[R][C];` (Kiểu dữ liệu `T`, `R` hàng, `C` cột):
+Địa chỉ của phần tử `D[i][j]` được tính theo công thức:
+$$\&D[i][j] = x_D + L(C \cdot i + j)$$
+Trong đó:
+*   $x_D$: Địa chỉ bắt đầu của mảng.
+*   $L$: Kích thước (byte) của kiểu dữ liệu $T$.
+*   $C$: Số cột (quan trọng nhất, dùng để xác định độ dài một hàng).
+
+---
+
+### Hình 3.36: Minh họa truy cập mảng $5 \times 3$ trong Assembly
+
+Giả sử chúng ta muốn truy cập phần tử `A[i][j]` của mảng `int A[5][3]`.
+*   **Địa chỉ gốc $x_A$:** nằm trong `%rdi`.
+*   **Chỉ số hàng $i$:** nằm trong `%rsi`.
+*   **Chỉ số cột $j$:** nằm trong `%rdx`.
+
+Trình biên dịch GCC thực hiện phép tính địa chỉ $x_A + 4(3i + j)$ bằng chuỗi lệnh sau:
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `leaq (%rsi,%rsi,2), %rax` | `lea rax, [rsi + rsi*2]` | Tính $3i$ (3 là số cột). |
+| 2 | `leaq (%rdi,%rax,4), %rax` | `lea rax, [rdi + rax*4]` | Tính $x_A + 4(3i) = x_A + 12i$. |
+| 3 | `movl (%rax,%rdx,4), %eax` | `mov eax, [rax + rdx*4]` | Lấy giá trị tại $x_A + 12i + 4j$. |
+
+**Kết luận:** Mã máy sử dụng khả năng tỉ lệ hóa (scaling) và cộng của kiến trúc x86-64 để tính toán địa chỉ phần tử một cách tối ưu.
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện mảng đa chiều)
+
+Khi bạn gặp một chuỗi lệnh như trên trong IDA Pro, đây là cách để "đọc vị" cấu trúc mảng:
+
+1.  **Nhận diện số Cột (Columns):** 
+    *   Hãy nhìn vào lệnh `lea` đầu tiên. Nếu bạn thấy nó nhân một chỉ số với một hằng số (ví dụ `rsi * 2 + rsi` là nhân 3), thì **3** chính là số cột của mảng.
+    *   Trong công thức mã máy, số cột luôn đi kèm với chỉ số hàng (`i`).
+2.  **Xác định địa chỉ cơ sở:**
+    *   Thanh ghi được cộng vào ở bước thứ 2 (ở đây là `rdi`) chính là địa chỉ bắt đầu của mảng đa chiều.
+3.  **Hệ số Scale cuối cùng:**
+    *   Lệnh `mov` cuối cùng sử dụng `rdx * 4`. Hệ số **4** cho biết kích thước mỗi phần tử là 4-byte (mảng `int` hoặc `float`).
+4.  **Mẹo dịch ngược:** 
+    *   Nếu bạn thấy: `Address = Base + L*C*i + L*j`
+    *   Hãy viết lại trong C là: `Base[i][j]` với số cột là `C`. 
+    *   Trong IDA, nếu đây là mảng trên Stack, các lệnh `lea` có thể trông phức tạp hơn vì nó cộng thêm cả offset của Frame (ví dụ `[rsp + 18h + rax*4]`).
+
+---
+
+### Practice Problem 3.38: Xác định kích thước mảng đa chiều
+
+**Mã nguồn C:**
+```c
+long P[M][N];
+long Q[N][M];
+
+long sum_element(long i, long j) {
+    return P[i][j] + Q[j][i];
+}
+```
+
+#### 1. Phân tích mã Assembly (ATT vs Intel/IDA Pro)
+*Quy ước: i trong %rdi, j trong %rsi*
+
+| Dòng | AT&T Syntax | Intel Syntax (IDA Pro) | Phân tích logic |
+| :--- | :--- | :--- | :--- |
+| 2 | `leaq 0(,%rdi,8), %rdx` | `lea rdx, [rdi*8]` | `rdx = 8 * i` |
+| 3 | `subq %rdi, %rdx` | `sub rdx, rdi` | `rdx = 8i - i = 7i` |
+| 4 | `addq %rsi, %rdx` | `add rdx, rsi` | **`rdx = 7i + j`** |
+| 5 | `leaq (%rsi,%rsi,4), %rax` | `lea rax, [rsi + rsi*4]` | `rax = 5 * j` |
+| 6 | `addq %rax, %rdi` | `add rdi, rax` | **`rdi = 5j + i`** |
+| 7 | `movq Q(,%rdi,8), %rax` | `mov rax, Q[rdi*8]` | Đọc từ mảng Q: $Q + 8(5j + i)$ |
+| 8 | `addq P(,%rdx,8), %rax` | `add rax, P[rdx*8]` | Cộng với mảng P: $P + 8(7i + j)$ |
+
+---
+
+#### 2. Xác định giá trị $N$ (Số cột của mảng P)
+*   Công thức truy cập `P[i][j]` là: $\text{Base}_P + 8(N \cdot i + j)$.
+*   Từ dòng 8 và dòng 4, ta thấy mã máy tính toán địa chỉ: $P + 8(7i + j)$.
+*   Đối chiếu hai công thức: $N \cdot i + j = 7i + j \Rightarrow \mathbf{N = 7}$.
+
+#### 3. Xác định giá trị $M$ (Số cột của mảng Q)
+*   Công thức truy cập `Q[j][i]` (lưu ý $j$ là hàng, $i$ là cột) là: $\text{Base}_Q + 8(M \cdot j + i)$.
+*   Từ dòng 7 và dòng 6, ta thấy mã máy tính toán địa chỉ: $Q + 8(5j + i)$.
+*   Đối chiếu hai công thức: $M \cdot j + i = 5j + i \Rightarrow \mathbf{M = 5}$.
+
+**Kết luận:** $M = 5$ và $N = 7$.
+
+---
+
+### IDA Pro Insights (Kỹ năng suy luận cấu trúc mảng)
+
+Khi bạn gặp các phép tính địa chỉ mảng đa chiều trong IDA Pro:
+
+1.  **Nhìn vào các phép nhân/LEA:**
+    *   Trình biên dịch rất ít khi dùng lệnh `imul` để tính chỉ số mảng vì nó chậm. Thay vào đó, nó dùng chuỗi `lea`, `shl`, `sub` để nhân hằng số.
+    *   Khi thấy `i` bị nhân với một số (như $7$ hoặc $5$ trong bài này), con số đó chính là **số lượng cột** ($C$) của mảng.
+2.  **Mẹo tính hệ số nhân:** 
+    *   `lea rdx, [rdi*8]; sub rdx, rdi` $\rightarrow$ Nhân với $(8-1) = 7$.
+    *   `lea rax, [rsi + rsi*4]` $\rightarrow$ Nhân với $(1+4) = 5$.
+3.  **Xác định chiều mảng:** 
+    *   Trong mã máy, thông tin về số hàng ($R$) thường bị mất (nếu không có kiểm tra biên). Nhưng số cột ($C$) bắt buộc phải xuất hiện trong mã máy để CPU biết được độ dài của mỗi hàng khi "nhảy" qua lại.
+    *   Nếu bạn thấy `P[i][j]`, hãy tìm hằng số đi kèm với `i`.
+    *   Nếu bạn thấy `Q[j][i]`, hãy tìm hằng số đi kèm với `j`.
+
+---
+
+## 3.8.4 Fixed-Size Arrays (Mảng kích thước cố định)
+
+Trình biên dịch C có khả năng thực hiện nhiều tối ưu hóa cho các đoạn mã vận hành trên mảng đa chiều có kích thước cố định. Ở mức tối ưu hóa `-O1`, GCC sẽ chuyển đổi cách truy cập mảng từ việc sử dụng chỉ số (`i, j`) sang sử dụng các **con trỏ** để giảm thiểu các phép tính nhân phức tạp bên trong vòng lặp.
+
+### Ví dụ: Nhân vô hướng hàng và cột của Ma trận
+
+Giả sử chúng ta có kiểu dữ liệu ma trận $16 \times 16$:
+```c
+#define N 16
+typedef int fix_matrix[N][N];
+```
+
+Hàm dưới đây tính toán phần tử $(i, k)$ của tích hai ma trận A và B (tương đương với tích vô hướng của hàng $i$ trong A và cột $k$ trong B).
+
+---
+
+### Hình 3.37: So sánh mã C gốc và mã C đã tối ưu hóa
+
+#### (a) Original C code (Mã gốc)
+```c
+int fix_prod_ele(fix_matrix A, fix_matrix B, long i, long k) {
+    long j;
+    int result = 0;
+    for (j = 0; j < N; j++)
+        result += A[i][j] * B[j][k];
+    return result;
+}
+```
+
+#### (b) Optimized C code (Mã tối ưu hóa - Mô phỏng logic máy)
+Trình biên dịch loại bỏ biến chạy `j`, thay thế bằng 3 con trỏ:
+1.  **`Aptr`**: Trỏ vào các phần tử liên tiếp trong hàng $i$ của A.
+2.  **`Bptr`**: Trỏ vào các phần tử liên tiếp trong cột $k$ của B.
+3.  **`Bend`**: Địa chỉ dừng của vòng lặp (vị trí kết thúc cột $k$ của B).
+
+```c
+int fix_prod_ele_opt(fix_matrix A, fix_matrix B, long i, long k) {
+    int *Aptr = &A[i][0];    // Trỏ vào đầu hàng i của A
+    int *Bptr = &B[0][k];    // Trỏ vào đầu cột k của B
+    int *Bend = &B[N][k];    // Điểm dừng (sau phần tử cuối cột k)
+    int result = 0;
+    do {
+        result += *Aptr * *Bptr;
+        Aptr++;              // Tiến 1 phần tử (4 bytes)
+        Bptr += N;           // Nhảy xuống hàng tiếp theo (16 * 4 = 64 bytes)
+    } while (Bptr != Bend);
+    return result;
+}
+```
+
+---
+
+### Phân tích mã Assembly (Hình 3.37c)
+
+**Ánh xạ thanh ghi:** `A` (%rdi), `B` (%rsi), `i` (%rdx), `k` (%rcx).
+**Thanh ghi tối ưu:** `%eax` (result), `%rdi` (Aptr), `%rcx` (Bptr), `%rsi` (Bend).
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `fix_prod_ele:` | `fix_prod_ele:` | Nhãn hàm. |
+| 2 | `salq $6, %rdx` | `shl rdx, 6` | `rdx = i * 64`. (1 hàng = 16 int * 4B = 64B). |
+| 3 | `addq %rdx, %rdi` | `add rdi, rdx` | **`Aptr = A + 64*i`**. |
+| 4 | `leaq (%rsi,%rcx,4), %rcx` | `lea rcx, [rsi + rcx*4]` | **`Bptr = B + 4*k`**. |
+| 5 | `leaq 1024(%rcx), %rsi` | `lea rsi, [rcx + 1024]` | **`Bend = Bptr + 1024`**. ($16 \times 64 = 1024$). |
+| 6 | `movl $0, %eax` | `mov eax, 0` | `result = 0`. |
+| 7 | `.L7:` | `loc_loop:` | **Thân vòng lặp (loop):** |
+| 8 | `movl (%rdi), %edx` | `mov edx, [rdi]` | Lấy giá trị `*Aptr`. |
+| 9 | `imull (%rcx), %edx` | `imul edx, [rcx]` | Nhân với `*Bptr`. |
+| 10| `addl %edx, %eax` | `add eax, edx` | `result += ...` |
+| 11| `addq $4, %rdi` | `add rdi, 4` | **`Aptr++`** (Tiến 4 bytes). |
+| 12| `addq $64, %rcx` | `add rcx, 64` | **`Bptr += 16`** (Tiến 16 hàng = 64 bytes). |
+| 13| `cmpq %rsi, %rcx` | `cmp rcx, rsi` | So sánh `Bptr` với `Bend`. |
+| 14| `jne .L7` | `jnz short loc_loop` | Nếu chưa bằng, tiếp tục lặp. |
+| 15| `rep; ret` | `retn` | Trả về `result`. |
+
+---
+
+### IDA Pro Insights (Kỹ năng đọc code ma trận)
+
+1.  **Hằng số dịch chuyển (Stride):** 
+    *   Trong IDA, khi thấy lệnh `add rcx, 64` bên trong vòng lặp, đây là dấu hiệu rõ rệt của việc truy cập **theo cột** trong một ma trận có độ rộng hàng là 64 bytes ($16 \times 4$ bytes).
+    *   Lệnh `add rdi, 4` cho thấy việc truy cập **theo hàng** (tiến từng phần tử liền kề).
+2.  **Nhận diện kích thước ma trận:**
+    *   Hằng số `1024` trong lệnh `lea rsi, [rcx + 1024]` là chìa khóa. Nó cho biết tổng số byte từ phần tử đầu tiên đến phần tử cuối cùng của cột. Vì mỗi bước nhảy là 64, ta tính được số hàng: $1024 / 64 = 16$ hàng.
+    *   Kết hợp với bước nhảy hàng 64 bytes, ta suy ra ma trận là $16 \times 16$.
+3.  **Tối ưu hóa con trỏ:** 
+    *   Trình biên dịch đã biến vòng lặp `for` (kiểm tra ở đầu) thành `do-while` (kiểm tra ở cuối) vì nó biết chắc chắn $N=16 > 0$. Điều này làm Graph View trong IDA trông rất gọn (chỉ có một mũi tên quay ngược duy nhất).
+4.  **Sử dụng lại thanh ghi:** 
+    *   Lưu ý cách thanh ghi `%rsi` ban đầu chứa địa chỉ `B`, nhưng sau đó bị ghi đè để chứa địa chỉ `Bend` (dòng 5). IDA sẽ theo dõi sự thay đổi này, bạn nên đổi tên nó từ `arg_B` thành `var_Bend` sau dòng 5.
+
+---
+
+### Practice Problem 3.39: Chứng minh công thức tính toán địa chỉ
+
+**Đề bài:** Sử dụng Phương trình 3.1 ($\&D[i][j] = x_D + L(C \cdot i + j)$) để giải thích cách tính các giá trị khởi tạo cho `Aptr`, `Bptr`, và `Bend` trong mã Assembly của hàm `fix_prod_ele`.
+
+**Thông số ma trận:** $L = 4$ (kiểu `int`), $C = 16$ (số cột $N=16$).
+
+<details>
+<summary><b>Nhấn để xem phân tích toán học</b></summary>
+
+1.  **`Aptr` (&A[i][0]):**
+    *   Áp dụng công thức: $x_A + 4(16 \cdot i + 0) = x_A + 64i$.
+    *   Trong Assembly (Hình 3.37c): Lệnh 2 tính `64*i` (`salq $6, %rdx`), lệnh 3 cộng vào `x_A` (`addq %rdx, %rdi`). **Khớp.**
+
+2.  **`Bptr` (&B[0][k]):**
+    *   Áp dụng công thức: $x_B + 4(16 \cdot 0 + k) = x_B + 4k$.
+    *   Trong Assembly: Lệnh 4 tính `x_B + 4*k` (`leaq (%rsi,%rcx,4), %rcx`). **Khớp.**
+
+3.  **`Bend` (&B[N][k]):**
+    *   Áp dụng công thức: $x_B + 4(16 \cdot 16 + k) = x_B + 4 \cdot 256 + 4k = (x_B + 4k) + 1024$.
+    *   Trong Assembly: Lệnh 5 cộng thêm `1024` vào `Bptr` (`leaq 1024(%rcx), %rsi`). **Khớp.**
+
+</details>
+
+---
+
+### Practice Problem 3.40: Tối ưu hóa truy cập đường chéo ma trận
+
+**Đề bài:** Phân tích mã Assembly của hàm `fix_set_diag` và viết lại phiên bản C tối ưu hóa (`fix_set_diag_opt`) mô phỏng đúng logic của trình biên dịch.
+
+#### 1. Phân tích mã Assembly (GCC -O1)
+*Quy ước: A in %rdi, val in %rsi*
+
+| Dòng | AT&T Syntax | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 2 | `movl $0, %eax` | `mov eax, 0` | **`offset = 0`** (Dùng làm bước nhảy byte). |
+| 4 | `movl %esi, (%rdi,%rax)` | `mov [rdi + rax], esi` | **`*(A + offset) = val`**. |
+| 5 | **`addq $68, %rax`** | **`add rax, 68`** | **`offset += 68`**. |
+| 6 | `cmpq $1088, %rax` | `cmp rax, 1088` | So sánh offset với 1088. |
+| 7 | `jne .L13` | `jnz short loc_loop` | Nếu chưa tới 1088, tiếp tục lặp. |
+
+#### 2. Tại sao hằng số lại là 68 và 1088?
+*   Địa chỉ của phần tử $A[i][i]$ là: $x_A + 4(16 \cdot i + i) = x_A + 4(17i) = x_A + \mathbf{68}i$.
+*   Khoảng cách giữa hai phần tử đường chéo liên tiếp ($A[i][i]$ và $A[i+1][i+1]$) là **68 bytes**.
+*   Vòng lặp chạy 16 lần, nên điểm dừng là $16 \times 68 = \mathbf{1088}$ bytes.
+
+#### 3. Viết lại mã C tối ưu hóa (`fix_set_diag_opt`)
+
+```c
+void fix_set_diag_opt(fix_matrix A, int val) {
+    int *Aptr = &A[0][0];      // Khởi tạo con trỏ tại phần tử đầu tiên
+    int *Aend = &A[N][N];      // Điểm kết thúc (A + 1088 bytes)
+    do {
+        *Aptr = val;           // Gán giá trị
+        Aptr += (N + 1);       // Nhảy đến phần tử đường chéo tiếp theo (16 + 1 = 17 int)
+    } while (Aptr != Aend);
+}
+```
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện hằng số ma trận)
+
+1.  **Hằng số bước nhảy (Stride):**
+    *   Trong IDA, nếu bạn thấy một vòng lặp truy cập mảng mà chỉ số tăng một lượng không phải 1, 2, 4, hay 8 (ví dụ `add rax, 68`), đây là dấu hiệu của việc truy cập các phần tử có quy luật đặc biệt (như đường chéo hoặc một trường cụ thể trong mảng các Struct).
+    *   Để tìm ra logic C, hãy lấy số đó chia cho kích thước kiểu dữ liệu: $68 / 4 = 17$. 
+    *   Trong ma trận $N \times N$, bước nhảy $N+1$ luôn là **đường chéo chính**.
+2.  **Nhận diện "Flat access":**
+    *   Trình biên dịch đã loại bỏ hoàn toàn các biến `i, j` và các phép nhân. Nó chỉ dùng một thanh ghi duy nhất (`rax`) để lưu trữ độ lệch byte (byte offset) từ đầu mảng.
+    *   Mẫu hình `[base + offset]` với `offset` tăng tiến là cách IDA hiển thị mã đã được tối ưu hóa cực hạn.
+3.  **Hằng số dừng (1088):**
+    *   Khi thấy số `1088`, hãy chuyển sang Hex (`440h`) hoặc thực hiện phép chia để đoán kích thước mảng. $1088 / 68 = 16$. Bạn biết ngay vòng lặp này chạy đúng 16 lần.
+
+---
+
+## 3.8.5 Variable-Size Arrays (Tiếp theo)
+
+Trong ví dụ về hàm `var_prod_ele`, trình biên dịch tối ưu hóa vòng lặp bằng cách sử dụng các thanh ghi để lưu trữ các giá trị trung gian, tránh việc nhân lặp đi lặp lại trong mỗi bước.
+
+### Phân tích mã Assembly của vòng lặp `var_prod_ele`
+
+**Ánh xạ thanh ghi:**
+*   `n`: `%rdi` (Dùng để kiểm tra biên vòng lặp).
+*   `Arow` (Con trỏ tới hàng $i$ của mảng A): `%rsi`.
+*   `Bptr` (Con trỏ tới phần tử trong cột $k$ của mảng B): `%rcx`.
+*   **`4n`** (Giá trị $n$ đã nhân tỉ lệ 4 bytes): **`%r9`** (Dùng để tăng `Bptr`).
+*   `result`: `%eax`.
+*   `j` (Chỉ số vòng lặp): `%rdx`.
+
+| Dòng | AT&T Syntax (Sách) | Intel Syntax (IDA Pro) | Giải thích logic |
+| :--- | :--- | :--- | :--- |
+| 1 | `.L24:` | `loc_L24:` | **Nhãn vòng lặp.** |
+| 2 | `movl (%rsi,%rdx,4), %r8d` | `mov r8d, [rsi+rdx*4]` | Đọc `Arow[j]` (4 bytes). |
+| 3 | `imull (%rcx), %r8d` | `imul r8d, [rcx]` | Nhân với `*Bptr`. |
+| 4 | `addl %r8d, %eax` | `add eax, r8d` | `result += ...` |
+| 5 | `addq $1, %rdx` | `add rdx, 1` | `j++` |
+| 6 | `addq %r9, %rcx` | `add rcx, r9` | **`Bptr += n`** (Nhảy xuống hàng tiếp theo). |
+| 7 | `cmpq %rdi, %rdx` | `cmp rdx, rdi` | So sánh `j` với `n`. |
+| 8 | `jne .L24` | `jnz short loc_L24` | Nếu `j != n`, tiếp tục lặp. |
+
+---
+
+### Phân tích kỹ thuật: Sự xuất hiện của hai giá trị $n$
+
+Một điểm đặc biệt trong đoạn mã này là trình biên dịch duy trì hai hình thái của biến `n` trong các thanh ghi khác nhau:
+1.  **Giá trị thực `n` (`%rdi`):** Được dùng ở dòng 7 để so sánh với chỉ số `j`, quyết định khi nào vòng lặp kết thúc.
+2.  **Giá trị tỉ lệ `4n` (`%r9`):** Được tính toán trước khi vào vòng lặp và dùng ở dòng 6. Vì mỗi hàng của mảng `int` chứa `n` phần tử, mỗi phần tử chiếm 4 bytes, nên để nhảy từ hàng này sang hàng tiếp theo ở cùng một cột, con trỏ phải tăng một lượng là $4n$ bytes.
+
+Việc chuẩn bị sẵn `4n` giúp loại bỏ phép nhân bên trong thân vòng lặp, giúp chương trình thực thi nhanh hơn đáng kể.
+
+---
+
+### IDA Pro Insights (Kỹ năng nhận diện bước nhảy mảng)
+
+Khi bạn gặp một vòng lặp duyệt mảng đa chiều trong IDA Pro:
+
+1.  **Xác định Stride (Bước nhảy):** Lệnh `add rcx, r9` (hoặc bất kỳ thanh ghi nào cộng vào một thanh ghi địa chỉ) là dấu hiệu của việc duyệt mảng theo cột. 
+    *   Nếu thanh ghi được cộng vào (`r9`) có giá trị phụ thuộc vào một tham số đầu vào (`n`), bạn có thể khẳng định đây là **mảng có kích thước biến đổi (Variable-size array)**.
+2.  **Tính toán kích thước hàng:** Trong IDA, hãy trace ngược lại xem thanh ghi `r9` được tính như thế nào. Nếu bạn thấy `shl r9, 2` (dịch trái 2 bit = nhân 4), bạn biết mỗi phần tử mảng chiếm 4 bytes (kiểu `int`).
+3.  **Sự thông minh của Compiler:** Trình biên dịch có thể nhận diện các mẫu hình (patterns) khi chương trình duyệt qua các phần tử của mảng đa chiều và tự động tạo ra mã dựa trên con trỏ (pointer-based) để tránh phép nhân theo công thức địa chỉ tiêu chuẩn. Điều này giúp cải thiện hiệu suất nhưng làm mã assembly khó đọc hơn so với mã C ban đầu.
+
